@@ -1,5 +1,5 @@
 # 工作流名称：Release IPQ60XX
-name: Release IPQ60XX
+name: Release IPQ60XX-QW
 # 触发条件：手动触发或定时触发（北京时间周五0点 = UTC时间周四16:00）
 on:
   workflow_dispatch:
@@ -459,20 +459,19 @@ jobs:
           set -e # 确保脚本在出错时停止
           echo "=== 开始准备发布内容 ==="
 
-          # 定义变量
-          CHIP_DIR="./firmware/${{ env.CHIP }}" # 使用 env.CHIP 作为子目录
+          # 定义变量 (移除了未使用的 CHIP_DIR)
           FINAL_FIRMWARE_DIR="./firmware"       # 最终发布文件放在根目录
 
           # 创建主固件目录
           mkdir -p "$FINAL_FIRMWARE_DIR"
-          mkdir -p "$CHIP_DIR"
+          # CHIP_DIR 变量已移除
 
           echo "=== 复制并组织固件文件 ==="
-          # 1. 复制所有固件文件（.bin, .config, .manifest等）到 $CHIP_DIR
+          # 1. 复制所有固件文件（.bin, .config, .manifest等）到 $FINAL_FIRMWARE_DIR
           # 使用 rsync 或 find + cp，排除 ipk, apk, logs
           find all-firmware -mindepth 2 -maxdepth 2 \
             \( -name "*.bin" -o -name "*.config" -o -name "*.manifest" -o -name "config.buildinfo" -o -name "Packages.manifest" \) \
-            -exec cp {} "$CHIP_DIR/" \;
+            -exec cp {} "$FINAL_FIRMWARE_DIR/" \;
 
           echo "=== 合并并打包软件包 ==="
           # 2. 合并 IPK 和 APK (去重)
@@ -599,10 +598,7 @@ jobs:
 
           echo "=== 移动固件目录到发布根目录 ==="
           # 5. 将芯片目录下的所有固件文件移动到发布根目录
-          if [ -d "$CHIP_DIR" ]; then
-            mv "$CHIP_DIR"/* "$FINAL_FIRMWARE_DIR"/
-            rmdir "$CHIP_DIR" # 删除空的芯片子目录
-          fi
+          # 原来的 CHIP_DIR 逻辑已移除，直接处理 FINAL_FIRMWARE_DIR
 
           echo "=== 创建发布说明 ==="
           # 6. 创建发布说明
