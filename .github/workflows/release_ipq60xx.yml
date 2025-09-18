@@ -1,0 +1,668 @@
+# 工作流名称：Release IPQ60XX
+name: Release IPQ60XX
+# 触发条件：手动触发或定时触发（北京时间周五0点 = UTC时间周四16:00）
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 16 * * 4'
+# 环境变量
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # 定义芯片架构变量，用于区分缓存和打包
+  CHIP: ipq60xx
+# 作业定义
+jobs:
+  # 为 immwrt 系列创建一个初始化 job
+  setup-immwrt-base:
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：设置构建环境
+      - name: Build System Setup
+        run: |
+          # 执行官方构建环境初始化脚本
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          # 安装额外依赖包
+          sudo -E apt -yqq install dos2unix libfuse-dev jq pigz
+          # 清理不需要的软件包
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E systemctl daemon-reload
+      # 步骤3：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤4：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          # 为所有shell脚本添加执行权限
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤5：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          # 设置时区为上海（北京时间）
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          # 生成构建日期
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          echo "使用芯片架构: ${{ env.CHIP }}"
+      # 步骤6：预克隆操作 (为 immwrt Pro 获取 repo_flag)
+      - name: Pre Clone for immwrt
+        run: ./scripts/pre_clone_action.sh ipq60xx_immwrt_Pro
+      # 步骤7：缓存基础构建环境 (源码、ccache、staging_dir、dl)
+      - name: Cache Base Build Environment
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./action_build
+          key: base-${{ env.CHIP }}-immwrt-${{ hashFiles('**/repo_flag') }}
+          restore-keys: |
+            base-${{ env.CHIP }}-immwrt-
+      # 步骤8：设置基础环境 (如果缓存未命中)
+      - name: Setup Base Environment (if cache miss)
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          echo "缓存未命中，开始设置基础环境..."
+          # 执行 update.sh 进行克隆和通用设置
+          ./scripts/update.sh ${{ env.REPO_URL }} ${{ env.REPO_BRANCH }} ./action_build ${{ env.COMMIT_HASH }}
+          cd ./action_build
+          # 应用 ipq60xx_immwrt_Pro 的 config (作为基础配置)
+          cp ../deconfig/ipq60xx_immwrt_Pro.config ./.config
+          make defconfig
+          # 下载共享依赖
+          make download -j$(nproc)
+          echo "基础环境设置完成。"
+      # 步骤9：上传基础构建环境 (供后续 job 使用)
+      - name: Upload Base Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: immwrt-base-build-env
+          path: ./action_build
+          retention-days: 1 # 仅需短期保留
+
+  # 为 libwrt 系列创建一个初始化 job
+  setup-libwrt-base:
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：设置构建环境
+      - name: Build System Setup
+        run: |
+          # 执行官方构建环境初始化脚本
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          # 安装额外依赖包
+          sudo -E apt -yqq install dos2unix libfuse-dev jq pigz
+          # 清理不需要的软件包
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E systemctl daemon-reload
+      # 步骤3：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤4：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          # 为所有shell脚本添加执行权限
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤5：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          # 设置时区为上海（北京时间）
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          # 生成构建日期
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          echo "使用芯片架构: ${{ env.CHIP }}"
+      # 步骤6：预克隆操作 (为 libwrt Pro 获取 repo_flag)
+      - name: Pre Clone for libwrt
+        run: ./scripts/pre_clone_action.sh ipq60xx_libwrt_Pro
+      # 步骤7：缓存基础构建环境 (源码、ccache、staging_dir、dl)
+      - name: Cache Base Build Environment
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./action_build
+          key: base-${{ env.CHIP }}-libwrt-${{ hashFiles('**/repo_flag') }}
+          restore-keys: |
+            base-${{ env.CHIP }}-libwrt-
+      # 步骤8：设置基础环境 (如果缓存未命中)
+      - name: Setup Base Environment (if cache miss)
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          echo "缓存未命中，开始设置基础环境..."
+          # 执行 update.sh 进行克隆和通用设置
+          ./scripts/update.sh ${{ env.REPO_URL }} ${{ env.REPO_BRANCH }} ./action_build ${{ env.COMMIT_HASH }}
+          cd ./action_build
+          # 应用 ipq60xx_libwrt_Pro 的 config (作为基础配置)
+          cp ../deconfig/ipq60xx_libwrt_Pro.config ./.config
+          make defconfig
+          # 下载共享依赖
+          make download -j$(nproc)
+          echo "基础环境设置完成。"
+      # 步骤9：上传基础构建环境 (供后续 job 使用)
+      - name: Upload Base Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: libwrt-base-build-env
+          path: ./action_build
+          retention-days: 1 # 仅需短期保留
+
+  # Pro 型号构建 (基于初始化环境)
+  build-immwrt-Pro:
+    needs: setup-immwrt-base
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载基础构建环境
+      - name: Download Base Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: immwrt-base-build-env
+          path: .
+      # 步骤6：应用 Pro 专属配置并构建
+      - name: Build Pro Firmware
+        run: |
+          echo "开始构建 ipq60xx_immwrt_Pro..."
+          ./scripts/build.sh ipq60xx_immwrt_Pro
+      # 步骤7：上传 Pro 构建产物
+      - name: Upload Pro Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_immwrt_Pro
+          path: ./temp_firmware/ipq60xx_immwrt_Pro/
+          retention-days: 3
+      # 步骤8：上传 Pro 构建后的环境 (供 Max 使用)
+      - name: Upload Pro Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: immwrt-Pro-build-env
+          path: ./action_build
+          retention-days: 1
+
+  build-libwrt-Pro:
+    needs: setup-libwrt-base
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载基础构建环境
+      - name: Download Base Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: libwrt-base-build-env
+          path: .
+      # 步骤6：应用 Pro 专属配置并构建
+      - name: Build Pro Firmware
+        run: |
+          echo "开始构建 ipq60xx_libwrt_Pro..."
+          ./scripts/build.sh ipq60xx_libwrt_Pro
+      # 步骤7：上传 Pro 构建产物
+      - name: Upload Pro Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_libwrt_Pro
+          path: ./temp_firmware/ipq60xx_libwrt_Pro/
+          retention-days: 3
+      # 步骤8：上传 Pro 构建后的环境 (供 Max 使用)
+      - name: Upload Pro Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: libwrt-Pro-build-env
+          path: ./action_build
+          retention-days: 1
+
+  # Max 型号构建 (依赖 Pro 环境)
+  build-immwrt-Max:
+    needs: build-immwrt-Pro
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载 Pro 构建后的环境
+      - name: Download Pro Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: immwrt-Pro-build-env
+          path: .
+      # 步骤6：应用 Max 专属配置并构建
+      - name: Build Max Firmware
+        run: |
+          echo "开始构建 ipq60xx_immwrt_Max..."
+          ./scripts/build.sh ipq60xx_immwrt_Max
+      # 步骤7：上传 Max 构建产物
+      - name: Upload Max Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_immwrt_Max
+          path: ./temp_firmware/ipq60xx_immwrt_Max/
+          retention-days: 3
+      # 步骤8：上传 Max 构建后的环境 (供 Ultra 使用)
+      - name: Upload Max Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: immwrt-Max-build-env
+          path: ./action_build
+          retention-days: 1
+
+  build-libwrt-Max:
+    needs: build-libwrt-Pro
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载 Pro 构建后的环境
+      - name: Download Pro Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: libwrt-Pro-build-env
+          path: .
+      # 步骤6：应用 Max 专属配置并构建
+      - name: Build Max Firmware
+        run: |
+          echo "开始构建 ipq60xx_libwrt_Max..."
+          ./scripts/build.sh ipq60xx_libwrt_Max
+      # 步骤7：上传 Max 构建产物
+      - name: Upload Max Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_libwrt_Max
+          path: ./temp_firmware/ipq60xx_libwrt_Max/
+          retention-days: 3
+      # 步骤8：上传 Max 构建后的环境 (供 Ultra 使用)
+      - name: Upload Max Build Environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: libwrt-Max-build-env
+          path: ./action_build
+          retention-days: 1
+
+  # Ultra 型号构建 (依赖 Max 环境)
+  build-immwrt-Ultra:
+    needs: build-immwrt-Max
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载 Max 构建后的环境
+      - name: Download Max Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: immwrt-Max-build-env
+          path: .
+      # 步骤6：应用 Ultra 专属配置并构建
+      - name: Build Ultra Firmware
+        run: |
+          echo "开始构建 ipq60xx_immwrt_Ultra..."
+          ./scripts/build.sh ipq60xx_immwrt_Ultra
+      # 步骤7：上传 Ultra 构建产物
+      - name: Upload Ultra Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_immwrt_Ultra
+          path: ./temp_firmware/ipq60xx_immwrt_Ultra/
+          retention-days: 3
+
+  build-libwrt-Ultra:
+    needs: build-libwrt-Max
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：释放磁盘空间
+      - name: Free disk space
+        uses: sbwml/actions@free-disk
+      # 步骤2：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤3：设置脚本执行权限
+      - name: Set Execute Permissions
+        run: |
+          echo "=== 设置执行权限 ==="
+          find . -name "*.sh" -type f -exec sh -c 'head -n1 "$1" | grep -q "^#!/" && chmod +x "$1"' _ {} \;
+      # 步骤4：设置构建日期和时区
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤5：下载 Max 构建后的环境
+      - name: Download Max Build Environment
+        uses: actions/download-artifact@v4
+        with:
+          name: libwrt-Max-build-env
+          path: .
+      # 步骤6：应用 Ultra 专属配置并构建
+      - name: Build Ultra Firmware
+        run: |
+          echo "开始构建 ipq60xx_libwrt_Ultra..."
+          ./scripts/build.sh ipq60xx_libwrt_Ultra
+      # 步骤7：上传 Ultra 构建产物
+      - name: Upload Ultra Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-ipq60xx_libwrt_Ultra
+          path: ./temp_firmware/ipq60xx_libwrt_Ultra/
+          retention-days: 3
+
+  # 发布作业
+  release:
+    # 依赖所有 build job 完成
+    needs:
+      - build-immwrt-Pro
+      - build-immwrt-Max
+      - build-immwrt-Ultra
+      - build-libwrt-Pro
+      - build-libwrt-Max
+      - build-libwrt-Ultra
+    runs-on: ubuntu-24.04
+    steps:
+      # 步骤1：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 步骤2：设置构建日期
+      - name: Set Build Date
+        run: |
+          # 设置时区并生成构建日期
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+      # 步骤3：下载所有构建产物
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # 下载路径
+          path: all-firmware
+      # 步骤4：准备固件目录和发布说明
+      - name: Prepare firmware directory and release notes
+        run: |
+          set -e # 确保脚本在出错时停止
+          echo "=== 开始准备发布内容 ==="
+
+          # 定义变量
+          CHIP_DIR="./firmware/${{ env.CHIP }}" # 使用 env.CHIP 作为子目录
+          FINAL_FIRMWARE_DIR="./firmware"       # 最终发布文件放在根目录
+
+          # 创建主固件目录
+          mkdir -p "$FINAL_FIRMWARE_DIR"
+          mkdir -p "$CHIP_DIR"
+
+          echo "=== 复制并组织固件文件 ==="
+          # 1. 复制所有固件文件（.bin, .config, .manifest等）到 $CHIP_DIR
+          # 使用 rsync 或 find + cp，排除 ipk, apk, logs
+          find all-firmware -mindepth 2 -maxdepth 2 \
+            \( -name "*.bin" -o -name "*.config" -o -name "*.manifest" -o -name "config.buildinfo" -o -name "Packages.manifest" \) \
+            -exec cp {} "$CHIP_DIR/" \;
+
+          echo "=== 合并并打包软件包 ==="
+          # 2. 合并 IPK 和 APK (去重)
+          mkdir -p ./temp_all_ipk ./temp_all_apk
+
+          # 查找并复制所有 IPK 文件到临时目录
+          find all-firmware -name "*.ipk" -type f -exec cp {} ./temp_all_ipk/ \;
+          # 查找并复制所有 APK 文件到临时目录
+          find all-firmware -name "*.apk" -type f -exec cp {} ./temp_all_apk/ \;
+
+          # IPK 去重并打包
+          if compgen -G "./temp_all_ipk/*.ipk" > /dev/null; then
+              echo "发现 IPK 文件，开始去重..."
+              mkdir -p ./temp_dedup_ipk
+              # 简单的文件名去重
+              find ./temp_all_ipk -type f -name "*.ipk" -exec sh -c 'cp "$1" "./temp_dedup_ipk/$(basename "$1")" 2>/dev/null || true' _ {} \;
+              # 确保 temp_dedup_ipk 存在且有文件
+              if compgen -G "./temp_dedup_ipk/*.ipk" > /dev/null; then
+                  echo "创建 IPK 包: ${{ env.CHIP }}_packages.tar.gz"
+                  tar -czf "$FINAL_FIRMWARE_DIR/${{ env.CHIP }}_packages.tar.gz" -C ./temp_dedup_ipk .
+                  # 计算数量
+                  IPK_COUNT=$(find ./temp_dedup_ipk -type f -name "*.ipk" | wc -l)
+                  echo "IPK_COUNT=$IPK_COUNT" >> $GITHUB_ENV
+                  # 提取 luci-app 名称
+                  find ./temp_dedup_ipk -type f -name "luci-app-*.ipk" -exec basename {} .ipk \; | sort | uniq > ./temp_luci_apps.txt
+                  if [ -s ./temp_luci_apps.txt ]; then
+                      echo "IPK_LUCI_APPS<<EOF" >> $GITHUB_ENV
+                      cat ./temp_luci_apps.txt >> $GITHUB_ENV
+                      echo "EOF" >> $GITHUB_ENV
+                  fi
+              else
+                  echo "警告: 去重后无 IPK 文件"
+                  echo "IPK_COUNT=0" >> $GITHUB_ENV
+              fi
+          else
+              echo "未发现 IPK 文件"
+              echo "IPK_COUNT=0" >> $GITHUB_ENV
+          fi
+
+          # APK 去重并打包 (逻辑类似)
+          if compgen -G "./temp_all_apk/*.apk" > /dev/null; then
+              echo "发现 APK 文件，开始去重..."
+              mkdir -p ./temp_dedup_apk
+              find ./temp_all_apk -type f -name "*.apk" -exec sh -c 'cp "$1" "./temp_dedup_apk/$(basename "$1")" 2>/dev/null || true' _ {} \;
+              if compgen -G "./temp_dedup_apk/*.apk" > /dev/null; then
+                  echo "创建 APK 包: ${{ env.CHIP }}_apk_packages.tar.gz"
+                  tar -czf "$FINAL_FIRMWARE_DIR/${{ env.CHIP }}_apk_packages.tar.gz" -C ./temp_dedup_apk . # 使用不同名称以防冲突，或合并逻辑
+                  # 计算数量
+                  APK_COUNT=$(find ./temp_dedup_apk -type f -name "*.apk" | wc -l)
+                  echo "APK_COUNT=$APK_COUNT" >> $GITHUB_ENV
+              else
+                  echo "警告: 去重后无 APK 文件"
+                  echo "APK_COUNT=0" >> $GITHUB_ENV
+              fi
+          else
+              echo "未发现 APK 文件"
+              echo "APK_COUNT=0" >> $GITHUB_ENV
+          fi
+
+          # 清理临时包目录
+          rm -rf ./temp_all_ipk ./temp_all_apk ./temp_dedup_ipk ./temp_dedup_apk ./temp_luci_apps.txt
+
+          echo "=== 打包构建日志 ==="
+          # 3. 打包日志
+          mkdir -p ./temp_all_logs
+          # 查找并复制所有 logs 目录内容
+          find all-firmware -name "logs" -type d | while read logdir; do
+             model_name=$(basename "$(dirname "$logdir")")
+             mkdir -p "./temp_all_logs/$model_name"
+             cp -r "$logdir"/* "./temp_all_logs/$model_name/"
+          done
+
+          if compgen -G "./temp_all_logs/*" > /dev/null; then
+              echo "创建日志包: ${{ env.CHIP }}_logs.tar.gz"
+              # 使用 pigz 如果可用，否则用 gzip
+              if command -v pigz &> /dev/null; then
+                tar -cf - -C ./temp_all_logs . | pigz -9 > "$FINAL_FIRMWARE_DIR/${{ env.CHIP }}_logs.tar.gz"
+              else
+                tar -czf "$FINAL_FIRMWARE_DIR/${{ env.CHIP }}_logs.tar.gz" -C ./temp_all_logs .
+              fi
+
+              # 4. 分析日志摘要 (简化版)
+              ERROR_SUMMARY=""
+              WARNING_SUMMARY=""
+              TOTAL_ERRORS=0
+              TOTAL_WARNINGS=0
+              find ./temp_all_logs -name "build_errors.log" | while read err_file; do
+                 model=$(basename "$(dirname "$err_file")")
+                 if ! grep -q "未发现错误信息" "$err_file"; then
+                    # 简单计数，实际可以更复杂
+                    err_count=$(grep -i "error\|failed\|failure" "$err_file" | grep -v "make.*error.*required" | wc -l)
+                    if [ "$err_count" -gt 0 ]; then
+                        TOTAL_ERRORS=$((TOTAL_ERRORS + err_count))
+                        ERROR_SUMMARY="${ERROR_SUMMARY}- $model: $err_count errors\n"
+                    fi
+                 fi
+              done
+              find ./temp_all_logs -name "build_warnings.log" | while read warn_file; do
+                 model=$(basename "$(dirname "$warn_file")")
+                 if ! grep -q "未发现警告信息" "$warn_file"; then
+                    warn_count=$(grep -i "warning\|warn" "$warn_file" | wc -l)
+                    if [ "$warn_count" -gt 0 ]; then
+                        TOTAL_WARNINGS=$((TOTAL_WARNINGS + warn_count))
+                        WARNING_SUMMARY="${WARNING_SUMMARY}- $model: $warn_count warnings\n"
+                    fi
+                 fi
+              done
+              # 将摘要存入环境变量 (注意换行符处理)
+              echo "LOG_ERROR_SUMMARY<<EOF" >> $GITHUB_ENV
+              echo -e "$ERROR_SUMMARY" >> $GITHUB_ENV
+              echo "EOF" >> $GITHUB_ENV
+              echo "LOG_WARNING_SUMMARY<<EOF" >> $GITHUB_ENV
+              echo -e "$WARNING_SUMMARY" >> $GITHUB_ENV
+              echo "EOF" >> $GITHUB_ENV
+              echo "TOTAL_ERRORS=$TOTAL_ERRORS" >> $GITHUB_ENV
+              echo "TOTAL_WARNINGS=$TOTAL_WARNINGS" >> $GITHUB_ENV
+
+          else
+              echo "未发现日志文件"
+              echo "TOTAL_ERRORS=0" >> $GITHUB_ENV
+              echo "TOTAL_WARNINGS=0" >> $GITHUB_ENV
+          fi
+          rm -rf ./temp_all_logs
+
+          echo "=== 移动固件目录到发布根目录 ==="
+          # 5. 将芯片目录下的所有固件文件移动到发布根目录
+          if [ -d "$CHIP_DIR" ]; then
+            mv "$CHIP_DIR"/* "$FINAL_FIRMWARE_DIR"/
+            rmdir "$CHIP_DIR" # 删除空的芯片子目录
+          fi
+
+          echo "=== 创建发布说明 ==="
+          # 6. 创建发布说明
+          {
+            echo "IPQ60xx 固件批量发布"
+            echo "构建时间: ${{ env.BUILD_DATE }}"
+            echo "包含以下型号:"
+            echo "- ipq60xx_immwrt_Pro"
+            echo "- ipq60xx_immwrt_Max"
+            echo "- ipq60xx_immwrt_Ultra"
+            echo "- ipq60xx_libwrt_Pro"
+            echo "- ipq60xx_libwrt_Max"
+            echo "- ipq60xx_libwrt_Ultra"
+            echo ""
+            echo "**默认设置:**"
+            echo "- WIFI密码: 12345678"
+            echo "- LAN地址: 192.168.111.1"
+            echo ""
+            echo "## 本发布包含以下文件:"
+            echo "- 各型号的固件文件 (.bin), 配置文件 (.config, .manifest, config.buildinfo)"
+          } > release_body.txt
+
+          # 添加 IPK 信息
+          if [ "${{ env.IPK_COUNT }}" -gt 0 ]; then
+              echo "- 合并后的 IPK 软件包 (${{ env.CHIP }}_packages.tar.gz)" >> release_body.txt
+              echo "  - 总数: ${{ env.IPK_COUNT }} 个" >> release_body.txt
+              if [ -n "${{ env.IPK_LUCI_APPS }}" ]; then
+                  echo "  - 包含的 Luci 应用:" >> release_body.txt
+                  echo "${{ env.IPK_LUCI_APPS }}" >> release_body.txt # env 中已包含换行
+              fi
+          fi
+
+          # 添加 APK 信息 (如果需要)
+          if [ "${{ env.APK_COUNT }}" -gt 0 ]; then
+              echo "- 合并后的 APK 软件包 (${{ env.CHIP }}_apk_packages.tar.gz)" >> release_body.txt
+              echo "  - 总数: ${{ env.APK_COUNT }} 个" >> release_body.txt
+          fi
+
+          # 添加日志信息和摘要
+          echo "- 构建日志 (${{ env.CHIP }}_logs.tar.gz)" >> release_body.txt
+          echo "  - 总错误数: ${{ env.TOTAL_ERRORS }}" >> release_body.txt
+          echo "  - 总警告数: ${{ env.TOTAL_WARNINGS }}" >> release_body.txt
+          if [ -n "${{ env.LOG_ERROR_SUMMARY }}" ]; then
+              echo "  - 错误详情:" >> release_body.txt
+              echo "${{ env.LOG_ERROR_SUMMARY }}" >> release_body.txt
+          fi
+          if [ -n "${{ env.LOG_WARNING_SUMMARY }}" ]; then
+              echo "  - 警告详情:" >> release_body.txt
+              echo "${{ env.LOG_WARNING_SUMMARY }}" >> release_body.txt
+          fi
+
+          echo "发布内容准备完成。"
+          echo "=== 发布内容准备完成 ==="
+          ls -R "$FINAL_FIRMWARE_DIR" # 调试输出
+
+      # 步骤5：发布固件
+      - name: Release Firmware
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.BUILD_DATE }}-${{ env.CHIP }}
+          # 发布文件：指向 firmware 根目录下的所有文件
+          files: ./firmware/*
+          body_path: ./release_body.txt
