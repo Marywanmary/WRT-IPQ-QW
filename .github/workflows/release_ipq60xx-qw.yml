@@ -1,5 +1,5 @@
 # 工作流名称：Release IPQ60XX
-name: Release IPQ60XX-QW
+name: Release IPQ60XX4
 # 触发条件：手动触发或定时触发（北京时间周五0点 = UTC时间周四16:00）
 on:
   workflow_dispatch:
@@ -66,8 +66,7 @@ jobs:
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
           echo "缓存未命中，开始设置基础环境..."
-          # 执行 update.sh 进行克隆和通用设置
-          ./scripts/update.sh ${{ env.REPO_URL }} ${{ env.REPO_BRANCH }} ./action_build ${{ env.COMMIT_HASH }}
+          # 执行 update.sh 进行通用设置 (克隆已在 pre_clone_action.sh 完成)
           cd ./action_build
           # 应用 ipq60xx_immwrt_Pro 的 config (作为基础配置)
           cp ../deconfig/ipq60xx_immwrt_Pro.config ./.config
@@ -75,6 +74,7 @@ jobs:
           # 下载共享依赖
           make download -j$(nproc)
           echo "基础环境设置完成。"
+          cd .. # 返回上级目录
       # 步骤9：上传基础构建环境 (供后续 job 使用)
       - name: Upload Base Build Environment
         uses: actions/upload-artifact@v4
@@ -137,8 +137,7 @@ jobs:
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
           echo "缓存未命中，开始设置基础环境..."
-          # 执行 update.sh 进行克隆和通用设置
-          ./scripts/update.sh ${{ env.REPO_URL }} ${{ env.REPO_BRANCH }} ./action_build ${{ env.COMMIT_HASH }}
+          # 执行 update.sh 进行通用设置 (克隆已在 pre_clone_action.sh 完成)
           cd ./action_build
           # 应用 ipq60xx_libwrt_Pro 的 config (作为基础配置)
           cp ../deconfig/ipq60xx_libwrt_Pro.config ./.config
@@ -146,6 +145,7 @@ jobs:
           # 下载共享依赖
           make download -j$(nproc)
           echo "基础环境设置完成。"
+          cd .. # 返回上级目录
       # 步骤9：上传基础构建环境 (供后续 job 使用)
       - name: Upload Base Build Environment
         uses: actions/upload-artifact@v4
