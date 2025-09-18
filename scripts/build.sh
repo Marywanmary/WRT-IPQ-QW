@@ -58,25 +58,38 @@ apply_config() {
     \cp -f "$CONFIG_FILE" "$BASE_PATH/$BUILD_DIR/.config"
     echo "Applied config from $CONFIG_FILE" | tee -a "$FULL_LOG"
 }
+# --- 修改从这里开始 ---
 # 从INI文件中读取仓库地址
 REPO_URL=$(read_ini_by_key "REPO_URL")
 # 从INI文件中读取仓库分支
 REPO_BRANCH=$(read_ini_by_key "REPO_BRANCH")
 # 如果分支为空则设置为默认值main
 REPO_BRANCH=${REPO_BRANCH:-main}
-# 从INI文件中读取构建目录
-BUILD_DIR=$(read_ini_by_key "BUILD_DIR")
 # 从INI文件中读取提交哈希值
 COMMIT_HASH=$(read_ini_by_key "COMMIT_HASH")
 # 如果哈希值为空则设置为默认值none
 COMMIT_HASH=${COMMIT_HASH:-none}
-# 检查是否存在action_build目录，存在则强制使用该目录作为构建目录
-if [[ -d $BASE_PATH/action_build ]]; then
+
+# --- 关键修改：统一 BUILD_DIR 为 action_build ---
+# 检查是否存在action_build目录（由 pre_clone_action.sh 创建），存在则强制使用该目录作为构建目录
+# 忽略 .ini 文件中的 BUILD_DIR 设置，以保证与 pre_clone_action.sh 一致
+if [[ -d "$BASE_PATH/action_build" ]]; then
     BUILD_DIR="action_build"
+    echo "Detected action_build directory, using it as BUILD_DIR." | tee -a "$FULL_LOG"
+else
+    # 如果 action_build 不存在（理论上不应该发生，因为 pre_clone_action.sh 应该创建它）
+    # 为了健壮性，可以 fallback 到 .ini 的设置，但这可能仍会出错
+    # INI_BUILD_DIR=$(read_ini_by_key "BUILD_DIR")
+    # BUILD_DIR=${INI_BUILD_DIR:-action_build} # 默认还是 action_build
+    # 更安全的做法是报错
+    echo "Error: Expected 'action_build' directory not found. pre_clone_action.sh might have failed or used a different directory." | tee -a "$FULL_LOG" "$ERROR_LOG"
+    exit 1
 fi
+# --- 修改到此结束 ---
+
 echo "Using repository: $REPO_URL" | tee -a "$FULL_LOG"
 echo "Using branch: $REPO_BRANCH" | tee -a "$FULL_LOG"
-echo "Using build directory: $BUILD_DIR" | tee -a "$FULL_LOG"
+echo "Using build directory: $BUILD_DIR" | tee -a "$FULL_LOG" # 这行现在会打印 "action_build"
 echo "Using commit hash: $COMMIT_HASH" | tee -a "$FULL_LOG"
 # 执行更新脚本，传入仓库地址、分支、构建目录和提交哈希值
 echo "Running update script..." | tee -a "$FULL_LOG"
