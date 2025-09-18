@@ -36,6 +36,7 @@ fi
 # 定义从INI文件中读取指定键值的函数
 read_ini_by_key() {
     local key=$1
+    # 移除了未使用的局部变量 value
     awk -F"=" -v key="$key" '$1 == key {print $2}' "$INI_FILE"
 }
 # 定义移除uhttpd依赖的函数
