@@ -31,14 +31,16 @@ REPO_URL=$(read_ini_by_key "REPO_URL")
 REPO_BRANCH=$(read_ini_by_key "REPO_BRANCH")
 # 如果分支为空则设置为默认值main
 REPO_BRANCH=${REPO_BRANCH:-main}
-# 定义构建目录路径
+# 定义构建目录路径 (注意：pre_clone_action.sh 硬编码使用 action_build)
 BUILD_DIR="$BASE_PATH/action_build"
 # 显示仓库地址和分支
-echo $REPO_URL $REPO_BRANCH
+echo "REPO_URL: $REPO_URL"
+echo "REPO_BRANCH: $REPO_BRANCH"
 # 将仓库地址和分支信息写入标记文件
 echo "$REPO_URL/$REPO_BRANCH" >"$BASE_PATH/repo_flag"
 # 克隆代码仓库
-git clone --depth 1 -b $REPO_BRANCH $REPO_URL $BUILD_DIR
+echo "Cloning repository: $REPO_URL branch: $REPO_BRANCH to $BUILD_DIR"
+git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" "$BUILD_DIR"
 # 定义项目镜像源配置文件路径
 PROJECT_MIRRORS_FILE="$BUILD_DIR/scripts/projectsmirrors.json"
 # 检查镜像源配置文件是否存在
