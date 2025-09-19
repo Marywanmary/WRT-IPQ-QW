@@ -1,4 +1,4 @@
-# IPQ60XX芯片平台固件构建工作流-三层分离：基础系统 → 包编译 → 固件打包
+# IPQ60XX芯片平台固件构建工作流
 name: IPQ60XX芯片固件构建
 
 on:
@@ -100,16 +100,25 @@ jobs:
         working-directory: openwrt
         run: |
           echo "当前目录: $(pwd)"
-          echo "上级目录文件列表:"
-          ls -la ..
-          # 根据日志，configs目录在上级目录中
-          cp ../configs/ipq60xx_base.config .config
+          echo "搜索configs目录:"
+          find ../.. -type d -name "configs" 2>/dev/null || echo "未找到configs目录"
+          echo "搜索ipq60xx_base.config文件:"
+          find ../.. -name "ipq60xx_base.config" 2>/dev/null || echo "未找到配置文件"
+          # 使用find命令定位配置文件
+          CONFIG_FILE=$(find ../.. -name "ipq60xx_base.config" | head -1)
+          if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+            cp "$CONFIG_FILE" .config
+            echo "成功复制配置文件: $CONFIG_FILE"
+          else
+            echo "错误: 无法找到ipq60xx_base.config文件"
+            exit 1
+          fi
 
       - name: 基础系统编译
         working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../build.log) 2>&1
+          exec > >(tee -a ../../build.log) 2>&1
           
           echo "开始基础系统编译: ${{ matrix.branch }}"
           make defconfig
@@ -203,10 +212,16 @@ jobs:
           echo "第三方软件源添加完成"
 
       - name: 合并完整配置
+        working-directory: openwrt
         run: |
-          chmod +x scripts/*.sh
-          cd openwrt
-          ../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          # 使用find命令定位脚本
+          SCRIPT_DIR=$(find ../.. -name "merge_config.sh" | head -1 | xargs dirname)
+          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/merge_config.sh" ]; then
+            "$SCRIPT_DIR/merge_config.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          else
+            echo "错误: 无法找到merge_config.sh脚本"
+            exit 1
+          fi
 
       - name: 安装软件包源
         working-directory: openwrt
@@ -220,7 +235,7 @@ jobs:
         working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../build.log) 2>&1
+          exec > >(tee -a ../../build.log) 2>&1
           
           echo "开始包编译: ${{ matrix.branch }}-${{ matrix.config }}"
           make defconfig
@@ -302,10 +317,16 @@ jobs:
           echo "第三方软件源添加完成"
 
       - name: 合并完整配置
+        working-directory: openwrt
         run: |
-          chmod +x scripts/*.sh
-          cd openwrt
-          ../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          # 使用find命令定位脚本
+          SCRIPT_DIR=$(find ../.. -name "merge_config.sh" | head -1 | xargs dirname)
+          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/merge_config.sh" ]; then
+            "$SCRIPT_DIR/merge_config.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          else
+            echo "错误: 无法找到merge_config.sh脚本"
+            exit 1
+          fi
 
       - name: 安装软件包源
         working-directory: openwrt
@@ -319,7 +340,7 @@ jobs:
         working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../build.log) 2>&1
+          exec > >(tee -a ../../build.log) 2>&1
           
           echo "开始固件打包: ${{ matrix.branch }}-${{ matrix.config }}"
           make defconfig
@@ -331,20 +352,26 @@ jobs:
 
       - name: 处理构建产物
         if: success()
+        working-directory: openwrt
         run: |
-          chmod +x scripts/*.sh
-          cd openwrt
-          ../scripts/artifacts.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          # 使用find命令定位脚本
+          SCRIPT_DIR=$(find ../.. -name "artifacts.sh" | head -1 | xargs dirname)
+          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/artifacts.sh" ]; then
+            "$SCRIPT_DIR/artifacts.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
+          else
+            echo "错误: 无法找到artifacts.sh脚本"
+            exit 1
+          fi
 
       - name: 构建失败时上传日志
         if: failure()
+        working-directory: openwrt
         run: |
-          cd openwrt
-          if [ -f "../build.log" ]; then
-            grep -i "error\|warn" ../build.log > ../error.log 2>/dev/null || true
+          if [ -f "../../build.log" ]; then
+            grep -i "error\|warn" ../../build.log > ../../error.log 2>/dev/null || true
             echo "=== 构建失败，上传日志 ==="
             echo "=== 构建日志最后100行 ==="
-            tail -100 ../build.log
+            tail -100 ../../build.log
           fi
 
       - name: 上传构建日志
@@ -374,8 +401,15 @@ jobs:
 
       - name: 创建发布包
         run: |
-          chmod +x scripts/*.sh
-          ./scripts/release.sh ipq60xx
+          # 使用find命令定位脚本
+          SCRIPT_DIR=$(find . -name "release.sh" | head -1 | xargs dirname)
+          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/release.sh" ]; then
+            chmod +x "$SCRIPT_DIR/release.sh"
+            "$SCRIPT_DIR/release.sh" ipq60xx
+          else
+            echo "错误: 无法找到release.sh脚本"
+            exit 1
+          fi
 
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v1
