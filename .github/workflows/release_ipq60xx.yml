@@ -138,13 +138,13 @@ jobs:
           echo "当前目录: $(pwd)"
           echo "脚本目录文件列表:"
           ls -la scripts/
-          echo "配置目录文件列表:"
-          ls -la configs/
+          echo "根目录文件列表:"
+          ls -la
           # 为所有脚本赋予权限
           chmod +x scripts/*.sh
           # 进入源码目录执行合并脚本
           cd ${{ env.REPO_DIR }}
-          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          ../../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
         working-directory: ${{ env.REPO_DIR }}
@@ -160,7 +160,7 @@ jobs:
           set -euxo pipefail
           
           # 重定向所有输出到日志文件
-          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          exec > >(tee -a ../../../${{ env.BUILD_LOG }}) 2>&1
           
           echo "开始构建配置: ${{ matrix.branch }}-${{ matrix.config }}"
           make defconfig
@@ -176,18 +176,18 @@ jobs:
         run: |
           chmod +x scripts/*.sh
           cd ${{ env.REPO_DIR }}
-          ../../scripts/artifacts.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          ../../../scripts/artifacts.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 构建失败时上传日志
         if: failure()
         run: |
           cd ${{ env.REPO_DIR }}
-          if [ -f "../../${{ env.BUILD_LOG }}" ]; then
+          if [ -f "../../../${{ env.BUILD_LOG }}" ]; then
             # 提取错误和警告信息
-            grep -i "error\|warn" ../../${{ env.BUILD_LOG }} > ../../${{ env.ERROR_LOG }} 2>/dev/null || true
+            grep -i "error\|warn" ../../../${{ env.BUILD_LOG }} > ../../../${{ env.ERROR_LOG }} 2>/dev/null || true
             echo "=== 构建失败，上传日志 ==="
             echo "=== 构建日志最后100行 ==="
-            tail -100 ../../${{ env.BUILD_LOG }}
+            tail -100 ../../../${{ env.BUILD_LOG }}
           fi
 
       - name: 上传构建日志
