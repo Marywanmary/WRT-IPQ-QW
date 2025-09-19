@@ -99,20 +99,7 @@ jobs:
       - name: 合并芯片基础配置
         working-directory: openwrt
         run: |
-          echo "当前目录: $(pwd)"
-          echo "搜索configs目录:"
-          find ../.. -type d -name "configs" 2>/dev/null || echo "未找到configs目录"
-          echo "搜索ipq60xx_base.config文件:"
-          find ../.. -name "ipq60xx_base.config" 2>/dev/null || echo "未找到配置文件"
-          # 使用find命令定位配置文件
-          CONFIG_FILE=$(find ../.. -name "ipq60xx_base.config" | head -1)
-          if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-            cp "$CONFIG_FILE" .config
-            echo "成功复制配置文件: $CONFIG_FILE"
-          else
-            echo "错误: 无法找到ipq60xx_base.config文件"
-            exit 1
-          fi
+          cp ../../configs/ipq60xx_base.config .config
 
       - name: 基础系统编译
         working-directory: openwrt
@@ -214,14 +201,7 @@ jobs:
       - name: 合并完整配置
         working-directory: openwrt
         run: |
-          # 使用find命令定位脚本
-          SCRIPT_DIR=$(find ../.. -name "merge_config.sh" | head -1 | xargs dirname)
-          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/merge_config.sh" ]; then
-            "$SCRIPT_DIR/merge_config.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
-          else
-            echo "错误: 无法找到merge_config.sh脚本"
-            exit 1
-          fi
+          ../../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
         working-directory: openwrt
@@ -319,14 +299,7 @@ jobs:
       - name: 合并完整配置
         working-directory: openwrt
         run: |
-          # 使用find命令定位脚本
-          SCRIPT_DIR=$(find ../.. -name "merge_config.sh" | head -1 | xargs dirname)
-          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/merge_config.sh" ]; then
-            "$SCRIPT_DIR/merge_config.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
-          else
-            echo "错误: 无法找到merge_config.sh脚本"
-            exit 1
-          fi
+          ../../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
         working-directory: openwrt
@@ -354,14 +327,7 @@ jobs:
         if: success()
         working-directory: openwrt
         run: |
-          # 使用find命令定位脚本
-          SCRIPT_DIR=$(find ../.. -name "artifacts.sh" | head -1 | xargs dirname)
-          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/artifacts.sh" ]; then
-            "$SCRIPT_DIR/artifacts.sh" ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
-          else
-            echo "错误: 无法找到artifacts.sh脚本"
-            exit 1
-          fi
+          ../../scripts/artifacts.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 构建失败时上传日志
         if: failure()
@@ -401,15 +367,8 @@ jobs:
 
       - name: 创建发布包
         run: |
-          # 使用find命令定位脚本
-          SCRIPT_DIR=$(find . -name "release.sh" | head -1 | xargs dirname)
-          if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/release.sh" ]; then
-            chmod +x "$SCRIPT_DIR/release.sh"
-            "$SCRIPT_DIR/release.sh" ipq60xx
-          else
-            echo "错误: 无法找到release.sh脚本"
-            exit 1
-          fi
+          chmod +x scripts/*.sh
+          ./scripts/release.sh ipq60xx
 
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v1
