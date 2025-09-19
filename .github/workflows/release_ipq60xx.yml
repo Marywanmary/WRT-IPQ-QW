@@ -1,0 +1,427 @@
+# IPQ60XX芯片平台固件构建工作流-三层分离：基础系统 → 包编译 → 固件打包
+name: IPQ60XX芯片固件构建
+
+on:
+  # 手动触发构建
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '发布到Release'
+        type: boolean
+        default: true
+      clean_disk:
+        description: '清理磁盘空间'
+        type: boolean
+        default: true
+  # 定时自动构建（每周一凌晨2点）
+  schedule:
+    - cron: '0 2 * * 1'
+
+# 环境变量定义
+env:
+  CHIP_PLATFORM: ipq60xx                    # 芯片平台变量
+  REPO_DIR: openwrt                         # 源码目录
+  ARTIFACTS_DIR: /tmp/artifacts             # 产物临时目录
+  BUILD_LOG: build.log                      # 构建日志文件
+  ERROR_LOG: error.log                      # 错误日志文件
+  BASE_CACHE_KEY: base-${{ github.sha }}-${{ env.CHIP_PLATFORM }}  # 基础缓存键
+
+# 工作流任务定义
+jobs:
+  # 第一层：基础系统编译（工具链 + 内核）
+  base_system:
+    name: 基础系统编译
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        branch: [immwrt, openwrt, libwrt]
+      max-parallel: 3
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘空间
+        if: github.event.inputs.clean_disk == 'true' || github.event_name == 'schedule'
+        run: |
+          echo "开始清理磁盘空间..."
+          sudo apt-get remove -y '^php.*' || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get autoclean || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/local/share/powershell || true
+          echo "磁盘空间清理完成"
+
+      - name: 安装构建环境
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+            python3-setuptools rsync swig unzip zlib1g-dev file wget
+
+      - name: 恢复基础缓存
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.REPO_DIR }}/dl
+            ${{ env.REPO_DIR }}/staging_dir
+          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+          restore-keys: |
+            ${{ env.BASE_CACHE_KEY }}-
+            base-
+
+      - name: 克隆源码
+        run: |
+          case ${{ matrix.branch }} in
+            "immwrt")
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "openwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "libwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt-6.x.git"
+              REPO_BRANCH="k6.12-nss"
+              ;;
+          esac
+          
+          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
+          cd ${{ env.REPO_DIR }}
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: 添加第三方软件源
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          echo "添加第三方软件源..."
+          echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
+          echo "src-git sirpdboy https://github.com/sirpdboy/luci-app-taskplan" >> feeds.conf.default
+          echo "src-git lucky https://github.com/gdy666/luci-app-lucky" >> feeds.conf.default
+          echo "src-git momo https://github.com/nikkinikki-org/OpenWrt-momo" >> feeds.conf.default
+          echo "src-git kenzo https://github.com/kenzok8/small-package" >> feeds.conf.default
+          echo "第三方软件源添加完成"
+
+      - name: 合并芯片基础配置
+        run: |
+          chmod +x scripts/*.sh
+          cd ${{ env.REPO_DIR }}
+          # 使用芯片基础配置
+          cp ../../configs/${{ env.CHIP_PLATFORM }}_base.config .config
+
+      - name: 基础系统编译
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          set -euxo pipefail
+          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          
+          echo "开始基础系统编译: ${{ matrix.branch }}"
+          make defconfig
+          make download -j$(nproc)
+          make tools/compile -j$(nproc)
+          make toolchain/compile -j$(nproc)
+          make target/compile -j$(nproc)
+          echo "基础系统编译完成: ${{ matrix.branch }}"
+
+      - name: 保存基础缓存
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            ${{ env.REPO_DIR }}/dl
+            ${{ env.REPO_DIR }}/staging_dir
+            ${{ env.REPO_DIR }}/build_dir
+          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+
+  # 第二层：并行包编译
+  package_build:
+    name: 包编译 (${{ matrix.branch }}-${{ matrix.config }})
+    needs: base_system
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - branch: immwrt
+            config: Ultra
+          - branch: immwrt
+            config: Max
+          - branch: immwrt
+            config: Pro
+          - branch: openwrt
+            config: Ultra
+          - branch: openwrt
+            config: Max
+          - branch: openwrt
+            config: Pro
+          - branch: libwrt
+            config: Ultra
+          - branch: libwrt
+            config: Max
+          - branch: libwrt
+            config: Pro
+      max-parallel: 9
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 恢复基础缓存
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.REPO_DIR }}/dl
+            ${{ env.REPO_DIR }}/staging_dir
+            ${{ env.REPO_DIR }}/build_dir
+          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+
+      - name: 克隆源码
+        run: |
+          case ${{ matrix.branch }} in
+            "immwrt")
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "openwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "libwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt-6.x.git"
+              REPO_BRANCH="k6.12-nss"
+              ;;
+          esac
+          
+          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
+          cd ${{ env.REPO_DIR }}
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: 添加第三方软件源
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          echo "添加第三方软件源..."
+          echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
+          echo "src-git sirpdboy https://github.com/sirpdboy/luci-app-taskplan" >> feeds.conf.default
+          echo "src-git lucky https://github.com/gdy666/luci-app-lucky" >> feeds.conf.default
+          echo "src-git momo https://github.com/nikkinikki-org/OpenWrt-momo" >> feeds.conf.default
+          echo "src-git kenzo https://github.com/kenzok8/small-package" >> feeds.conf.default
+          echo "第三方软件源添加完成"
+
+      - name: 合并完整配置
+        run: |
+          chmod +x scripts/*.sh
+          cd ${{ env.REPO_DIR }}
+          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+
+      - name: 安装软件包源
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          echo "更新和安装软件包源..."
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          echo "软件包源安装完成"
+
+      - name: 包编译
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          set -euxo pipefail
+          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          
+          echo "开始包编译: ${{ matrix.branch }}-${{ matrix.config }}"
+          make defconfig
+          make package/compile -j$(nproc)
+          echo "包编译完成: ${{ matrix.branch }}-${{ matrix.config }}"
+
+  # 第三层：固件打包
+  firmware_package:
+    name: 固件打包 (${{ matrix.branch }}-${{ matrix.config }})
+    needs: package_build
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - branch: immwrt
+            config: Ultra
+          - branch: immwrt
+            config: Max
+          - branch: immwrt
+            config: Pro
+          - branch: openwrt
+            config: Ultra
+          - branch: openwrt
+            config: Max
+          - branch: openwrt
+            config: Pro
+          - branch: libwrt
+            config: Ultra
+          - branch: libwrt
+            config: Max
+          - branch: libwrt
+            config: Pro
+      max-parallel: 9
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 恢复基础缓存
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.REPO_DIR }}/dl
+            ${{ env.REPO_DIR }}/staging_dir
+            ${{ env.REPO_DIR }}/build_dir
+          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+
+      - name: 克隆源码
+        run: |
+          case ${{ matrix.branch }} in
+            "immwrt")
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "openwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "libwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt-6.x.git"
+              REPO_BRANCH="k6.12-nss"
+              ;;
+          esac
+          
+          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
+          cd ${{ env.REPO_DIR }}
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: 添加第三方软件源
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          echo "添加第三方软件源..."
+          echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
+          echo "src-git sirpdboy https://github.com/sirpdboy/luci-app-taskplan" >> feeds.conf.default
+          echo "src-git lucky https://github.com/gdy666/luci-app-lucky" >> feeds.conf.default
+          echo "src-git momo https://github.com/nikkinikki-org/OpenWrt-momo" >> feeds.conf.default
+          echo "src-git kenzo https://github.com/kenzok8/small-package" >> feeds.conf.default
+          echo "第三方软件源添加完成"
+
+      - name: 合并完整配置
+        run: |
+          chmod +x scripts/*.sh
+          cd ${{ env.REPO_DIR }}
+          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+
+      - name: 安装软件包源
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          echo "更新和安装软件包源..."
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          echo "软件包源安装完成"
+
+      - name: 固件打包
+        working-directory: ${{ env.REPO_DIR }}
+        run: |
+          set -euxo pipefail
+          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          
+          echo "开始固件打包: ${{ matrix.branch }}-${{ matrix.config }}"
+          make defconfig
+          make package/install -j$(nproc)
+          make target/install -j$(nproc)
+          make json_overview_image_info
+          make checksum
+          echo "固件打包完成: ${{ matrix.branch }}-${{ matrix.config }}"
+
+      - name: 处理构建产物
+        if: success()
+        run: |
+          chmod +x scripts/*.sh
+          cd ${{ env.REPO_DIR }}
+          ../../scripts/artifacts.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+
+      - name: 构建失败时上传日志
+        if: failure()
+        run: |
+          cd ${{ env.REPO_DIR }}
+          if [ -f "../../${{ env.BUILD_LOG }}" ]; then
+            grep -i "error\|warn" ../../${{ env.BUILD_LOG }} > ../../${{ env.ERROR_LOG }} 2>/dev/null || true
+            echo "=== 构建失败，上传日志 ==="
+            echo "=== 构建日志最后100行 ==="
+            tail -100 ../../${{ env.BUILD_LOG }}
+          fi
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CHIP_PLATFORM }}-${{ matrix.branch }}-${{ matrix.config }}-logs
+          path: |
+            ${{ env.BUILD_LOG }}
+            ${{ env.ERROR_LOG }}
+          if-no-files-found: ignore
+
+  # 发布阶段
+  release:
+    name: 创建发布版本
+    needs: firmware_package
+    if: (github.event.inputs.release == 'true' || github.event_name == 'schedule') && success()
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.ARTIFACTS_DIR }}
+
+      - name: 创建发布包
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/release.sh ${{ env.CHIP_PLATFORM }}
+
+      - name: 创建GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.CHIP_PLATFORM }}-$(date +%Y%m%d)
+          name: 固件发布 - ${{ env.CHIP_PLATFORM }} - $(date +%Y-%m-%d)
+          body: |
+            ## 📦 固件信息
+            - 默认管理地址：192.168.111.1
+            - 默认用户：root
+            - 默认密码：none
+            - 默认WIFI密码: 12345678
+            
+            ## 🖥️ 支持设备
+            - 京东云亚瑟 (jdcloud_re-ss-01)
+            - 京东云雅典娜 (jdcloud_re-cs-02)
+            
+            ## 📋 包含内容
+            - 各设备固件 (sysupgrade & factory)
+            - 配置文件 (.config)
+            - 构建信息 (.manifest, .config.buildinfo)
+            - 编译日志 (完整日志和错误日志)
+            - 软件包 (ipk文件)
+            
+            ## 👤 作者: Mary
+            - 发布时间: $(date +%Y-%m-%d)
+            
+            ## 🔧 第三方软件源
+            - tailscale: https://github.com/tailscale/tailscale
+            - sirpdboy: https://github.com/sirpdboy/luci-app-taskplan
+            - lucky: https://github.com/gdy666/luci-app-lucky
+            - momo: https://github.com/nikkinikki-org/OpenWrt-momo
+            - kenzok8: https://github.com/kenzok8/small-package (优先级最低)
+          files: |
+            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-firmware.tar.gz
+            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-config.tar.gz
+            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-log.tar.gz
+            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-app.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
