@@ -97,11 +97,14 @@ jobs:
           echo "第三方软件源添加完成"
 
       - name: 合并芯片基础配置
+        working-directory: openwrt
         run: |
-          chmod +x scripts/*.sh
-          cd openwrt
-          # 使用芯片基础配置
-          cp ../configs/ipq60xx_base.config .config
+          echo "当前目录: $(pwd)"
+          echo "上级目录文件列表:"
+          ls -la ..
+          echo "配置文件列表:"
+          ls -la ../../configs/
+          cp ../../configs/ipq60xx_base.config .config
 
       - name: 基础系统编译
         working-directory: openwrt
