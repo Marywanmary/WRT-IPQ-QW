@@ -11,8 +11,8 @@ CONFIG_TYPE=$3
 
 echo "正在合并配置文件: $CHIP_PLATFORM $BRANCH $CONFIG_TYPE"
 
-# 获取仓库根目录路径
-REPO_ROOT="../../../"
+# 获取仓库根目录路径（相对于OpenWrt源码目录）
+REPO_ROOT="../../"
 
 # 根据分支确定基础配置文件
 case $BRANCH in
