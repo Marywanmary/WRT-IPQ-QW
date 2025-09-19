@@ -5,39 +5,25 @@
 
 set -euxo pipefail
 
-# 获取脚本所在目录（相对于执行时的当前目录）
-SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
-echo "脚本相对目录: $SCRIPT_DIR"
-
-# 获取仓库根目录的绝对路径
-if [[ "$SCRIPT_DIR" == "/"* ]]; then
-    # 如果是绝对路径
-    REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-else
-    # 如果是相对路径
-    REPO_ROOT="$(pwd)/$(dirname "$SCRIPT_DIR")"
-    REPO_ROOT="$(dirname "$REPO_ROOT")"
-fi
-
-echo "脚本绝对目录: $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "仓库根目录: $REPO_ROOT"
-
 CHIP_PLATFORM=$1
 BRANCH=$2
 CONFIG_TYPE=$3
 
 echo "正在合并配置文件: $CHIP_PLATFORM $BRANCH $CONFIG_TYPE"
 
+# 获取仓库根目录路径
+REPO_ROOT="../../../"
+
 # 根据分支确定基础配置文件
 case $BRANCH in
     "immwrt")
-        BRANCH_CONFIG="configs/imm_base.config"
+        BRANCH_CONFIG="${REPO_ROOT}configs/imm_base.config"
         ;;
     "openwrt")
-        BRANCH_CONFIG="configs/op_base.config"
+        BRANCH_CONFIG="${REPO_ROOT}configs/op_base.config"
         ;;
     "libwrt")
-        BRANCH_CONFIG="configs/lib_base.config"
+        BRANCH_CONFIG="${REPO_ROOT}configs/lib_base.config"
         ;;
     *)
         echo "错误: 未知分支 $BRANCH"
@@ -48,13 +34,13 @@ esac
 # 根据配置类型确定软件包配置文件
 case $CONFIG_TYPE in
     "Pro")
-        PACKAGE_CONFIG="configs/Pro.config"
+        PACKAGE_CONFIG="${REPO_ROOT}configs/Pro.config"
         ;;
     "Max")
-        PACKAGE_CONFIG="configs/Max.config"
+        PACKAGE_CONFIG="${REPO_ROOT}configs/Max.config"
         ;;
     "Ultra")
-        PACKAGE_CONFIG="configs/Ultra.config"
+        PACKAGE_CONFIG="${REPO_ROOT}configs/Ultra.config"
         ;;
     *)
         echo "错误: 未知配置类型 $CONFIG_TYPE"
@@ -63,23 +49,24 @@ case $CONFIG_TYPE in
 esac
 
 # 芯片配置文件路径
-CHIP_CONFIG="configs/${CHIP_PLATFORM}_base.config"
+CHIP_CONFIG="${REPO_ROOT}configs/${CHIP_PLATFORM}_base.config"
 
 echo "芯片配置文件: $CHIP_CONFIG"
 echo "分支配置文件: $BRANCH_CONFIG"
 echo "软件包配置文件: $PACKAGE_CONFIG"
 
-# 检查configs目录是否存在
-if [ ! -d "configs" ]; then
+# 检查仓库根目录
+echo "仓库根目录文件列表:"
+ls -la $REPO_ROOT
+
+# 检查配置文件目录是否存在
+if [ ! -d "${REPO_ROOT}configs" ]; then
     echo "错误: configs目录不存在"
-    echo "当前目录: $(pwd)"
-    echo "当前目录文件列表:"
-    ls -la
     exit 1
 fi
 
-echo "configs目录文件列表:"
-ls -la configs/
+echo "配置目录文件列表:"
+ls -la ${REPO_ROOT}configs/
 
 # 检查配置文件是否存在
 if [ ! -f "$CHIP_CONFIG" ]; then
