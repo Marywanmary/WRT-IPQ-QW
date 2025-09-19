@@ -17,15 +17,6 @@ on:
   schedule:
     - cron: '0 2 * * 1'
 
-# 环境变量定义
-env:
-  CHIP_PLATFORM: ipq60xx                    # 芯片平台变量
-  REPO_DIR: openwrt                         # 源码目录
-  ARTIFACTS_DIR: /tmp/artifacts             # 产物临时目录
-  BUILD_LOG: build.log                      # 构建日志文件
-  ERROR_LOG: error.log                      # 错误日志文件
-  BASE_CACHE_KEY: base-${{ github.sha }}-${{ env.CHIP_PLATFORM }}  # 基础缓存键
-
 # 工作流任务定义
 jobs:
   # 第一层：基础系统编译（工具链 + 内核）
@@ -65,12 +56,12 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            ${{ env.REPO_DIR }}/dl
-            ${{ env.REPO_DIR }}/staging_dir
-          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+            openwrt/dl
+            openwrt/staging_dir
+          key: base-${{ github.sha }}-ipq60xx-${{ matrix.branch }}
           restore-keys: |
-            ${{ env.BASE_CACHE_KEY }}-
-            base-
+            base-${{ github.sha }}-ipq60xx-
+            base-ipq60xx-
 
       - name: 克隆源码
         run: |
@@ -89,13 +80,13 @@ jobs:
               ;;
           esac
           
-          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
-          cd ${{ env.REPO_DIR }}
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
       - name: 添加第三方软件源
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           echo "添加第三方软件源..."
           echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
@@ -108,15 +99,15 @@ jobs:
       - name: 合并芯片基础配置
         run: |
           chmod +x scripts/*.sh
-          cd ${{ env.REPO_DIR }}
+          cd openwrt
           # 使用芯片基础配置
-          cp ../../configs/${{ env.CHIP_PLATFORM }}_base.config .config
+          cp ../configs/ipq60xx_base.config .config
 
       - name: 基础系统编译
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          exec > >(tee -a ../build.log) 2>&1
           
           echo "开始基础系统编译: ${{ matrix.branch }}"
           make defconfig
@@ -130,10 +121,10 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            ${{ env.REPO_DIR }}/dl
-            ${{ env.REPO_DIR }}/staging_dir
-            ${{ env.REPO_DIR }}/build_dir
-          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+            openwrt/dl
+            openwrt/staging_dir
+            openwrt/build_dir
+          key: base-${{ github.sha }}-ipq60xx-${{ matrix.branch }}
 
   # 第二层：并行包编译
   package_build:
@@ -171,10 +162,10 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            ${{ env.REPO_DIR }}/dl
-            ${{ env.REPO_DIR }}/staging_dir
-            ${{ env.REPO_DIR }}/build_dir
-          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+            openwrt/dl
+            openwrt/staging_dir
+            openwrt/build_dir
+          key: base-${{ github.sha }}-ipq60xx-${{ matrix.branch }}
 
       - name: 克隆源码
         run: |
@@ -193,13 +184,13 @@ jobs:
               ;;
           esac
           
-          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
-          cd ${{ env.REPO_DIR }}
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
       - name: 添加第三方软件源
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           echo "添加第三方软件源..."
           echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
@@ -212,11 +203,11 @@ jobs:
       - name: 合并完整配置
         run: |
           chmod +x scripts/*.sh
-          cd ${{ env.REPO_DIR }}
-          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          cd openwrt
+          ../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           echo "更新和安装软件包源..."
           ./scripts/feeds update -a
@@ -224,10 +215,10 @@ jobs:
           echo "软件包源安装完成"
 
       - name: 包编译
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          exec > >(tee -a ../build.log) 2>&1
           
           echo "开始包编译: ${{ matrix.branch }}-${{ matrix.config }}"
           make defconfig
@@ -270,10 +261,10 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            ${{ env.REPO_DIR }}/dl
-            ${{ env.REPO_DIR }}/staging_dir
-            ${{ env.REPO_DIR }}/build_dir
-          key: ${{ env.BASE_CACHE_KEY }}-${{ matrix.branch }}
+            openwrt/dl
+            openwrt/staging_dir
+            openwrt/build_dir
+          key: base-${{ github.sha }}-ipq60xx-${{ matrix.branch }}
 
       - name: 克隆源码
         run: |
@@ -292,13 +283,13 @@ jobs:
               ;;
           esac
           
-          git clone $REPO_URL -b $REPO_BRANCH ${{ env.REPO_DIR }}
-          cd ${{ env.REPO_DIR }}
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
       - name: 添加第三方软件源
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           echo "添加第三方软件源..."
           echo "src-git tailscale https://github.com/tailscale/tailscale" >> feeds.conf.default
@@ -311,11 +302,11 @@ jobs:
       - name: 合并完整配置
         run: |
           chmod +x scripts/*.sh
-          cd ${{ env.REPO_DIR }}
-          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          cd openwrt
+          ../scripts/merge_config.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           echo "更新和安装软件包源..."
           ./scripts/feeds update -a
@@ -323,10 +314,10 @@ jobs:
           echo "软件包源安装完成"
 
       - name: 固件打包
-        working-directory: ${{ env.REPO_DIR }}
+        working-directory: openwrt
         run: |
           set -euxo pipefail
-          exec > >(tee -a ../../${{ env.BUILD_LOG }}) 2>&1
+          exec > >(tee -a ../build.log) 2>&1
           
           echo "开始固件打包: ${{ matrix.branch }}-${{ matrix.config }}"
           make defconfig
@@ -340,28 +331,28 @@ jobs:
         if: success()
         run: |
           chmod +x scripts/*.sh
-          cd ${{ env.REPO_DIR }}
-          ../../scripts/artifacts.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          cd openwrt
+          ../scripts/artifacts.sh ipq60xx ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 构建失败时上传日志
         if: failure()
         run: |
-          cd ${{ env.REPO_DIR }}
-          if [ -f "../../${{ env.BUILD_LOG }}" ]; then
-            grep -i "error\|warn" ../../${{ env.BUILD_LOG }} > ../../${{ env.ERROR_LOG }} 2>/dev/null || true
+          cd openwrt
+          if [ -f "../build.log" ]; then
+            grep -i "error\|warn" ../build.log > ../error.log 2>/dev/null || true
             echo "=== 构建失败，上传日志 ==="
             echo "=== 构建日志最后100行 ==="
-            tail -100 ../../${{ env.BUILD_LOG }}
+            tail -100 ../build.log
           fi
 
       - name: 上传构建日志
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.CHIP_PLATFORM }}-${{ matrix.branch }}-${{ matrix.config }}-logs
+          name: ipq60xx-${{ matrix.branch }}-${{ matrix.config }}-logs
           path: |
-            ${{ env.BUILD_LOG }}
-            ${{ env.ERROR_LOG }}
+            build.log
+            error.log
           if-no-files-found: ignore
 
   # 发布阶段
@@ -377,18 +368,18 @@ jobs:
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         with:
-          path: ${{ env.ARTIFACTS_DIR }}
+          path: /tmp/artifacts
 
       - name: 创建发布包
         run: |
           chmod +x scripts/*.sh
-          ./scripts/release.sh ${{ env.CHIP_PLATFORM }}
+          ./scripts/release.sh ipq60xx
 
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ env.CHIP_PLATFORM }}-$(date +%Y%m%d)
-          name: 固件发布 - ${{ env.CHIP_PLATFORM }} - $(date +%Y-%m-%d)
+          tag_name: ipq60xx-$(date +%Y%m%d)
+          name: 固件发布 - ipq60xx - $(date +%Y-%m-%d)
           body: |
             ## 📦 固件信息
             - 默认管理地址：192.168.111.1
@@ -417,10 +408,10 @@ jobs:
             - momo: https://github.com/nikkinikki-org/OpenWrt-momo
             - kenzok8: https://github.com/kenzok8/small-package (优先级最低)
           files: |
-            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-firmware.tar.gz
-            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-config.tar.gz
-            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-log.tar.gz
-            ${{ env.ARTIFACTS_DIR }}/release/${{ env.CHIP_PLATFORM }}-app.tar.gz
+            /tmp/artifacts/release/ipq60xx-firmware.tar.gz
+            /tmp/artifacts/release/ipq60xx-config.tar.gz
+            /tmp/artifacts/release/ipq60xx-log.tar.gz
+            /tmp/artifacts/release/ipq60xx-app.tar.gz
           draft: false
           prerelease: false
         env:
