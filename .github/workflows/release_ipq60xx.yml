@@ -144,7 +144,7 @@ jobs:
           chmod +x scripts/*.sh
           # 进入源码目录执行合并脚本
           cd ${{ env.REPO_DIR }}
-          ../../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
+          ../../scripts/merge_config.sh ${{ env.CHIP_PLATFORM }} ${{ matrix.branch }} ${{ matrix.config }}
 
       - name: 安装软件包源
         working-directory: ${{ env.REPO_DIR }}
