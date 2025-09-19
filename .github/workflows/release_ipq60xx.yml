@@ -102,9 +102,8 @@ jobs:
           echo "当前目录: $(pwd)"
           echo "上级目录文件列表:"
           ls -la ..
-          echo "配置文件列表:"
-          ls -la ../../configs/
-          cp ../../configs/ipq60xx_base.config .config
+          # 根据日志，configs目录在上级目录中
+          cp ../configs/ipq60xx_base.config .config
 
       - name: 基础系统编译
         working-directory: openwrt
