@@ -21,10 +21,6 @@ on:
         default: false
 
 env:
-  REPO_URLS: |
-    https://github.com/laipeng668/immortalwrt.git:master:immwrt
-    https://github.com/laipeng668/openwrt.git:master:openwrt
-    https://github.com/laipeng668/openwrt-6.x.git:k6.12-nss:libwrt
   CONFIG_DIR: configs
   OUTPUT_DIR: output
   DEFAULT_IP: 192.168.111.1
@@ -51,8 +47,8 @@ jobs:
           base_matrix='{"include":['
           packages_matrix='{"include":['
           
-          # 获取所有仓库
-          repos=$(echo "$REPO_URLS" | while IFS=: read -r url branch short; do echo "$short"; done)
+          # 直接定义仓库列表，避免解析URL中的冒号
+          repos="immwrt openwrt libwrt"
           
           # 获取所有设备配置
           for device_config in $(ls configs/*_base.config | grep -v op_base | grep -v imm_base | grep -v lib_base); do
@@ -115,7 +111,7 @@ jobs:
       - name: 设置构建环境
         id: build
         run: |
-          # 设置构建目录
+          # 设置构建目录（避免使用冒号）
           BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}"
           echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
           
@@ -263,7 +259,7 @@ jobs:
       - name: 设置构建环境
         id: build
         run: |
-          # 设置构建目录
+          # 设置构建目录（避免使用冒号）
           BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}"
           echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
           
