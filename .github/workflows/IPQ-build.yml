@@ -51,6 +51,9 @@ jobs:
           base_matrix='{"include":['
           packages_matrix='{"include":['
           
+          # 获取所有仓库
+          repos=$(echo "$REPO_URLS" | while IFS=: read -r url branch short; do echo "$short"; done)
+          
           # 获取所有设备配置
           for device_config in $(ls configs/*_base.config | grep -v op_base | grep -v imm_base | grep -v lib_base); do
             chip=$(basename "$device_config" _base.config)
@@ -62,18 +65,20 @@ jobs:
             for device in $devices; do
               echo "发现设备: $device"
               
-              # 为每个设备创建三种配置变体
-              for pkg_config in Pro Max Ultra; do
-                # 添加到完整矩阵
-                matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
-                
-                # 添加到基础系统矩阵 (仅Ultra配置)
-                if [ "$pkg_config" = "Ultra" ]; then
-                  base_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
-                fi
-                
-                # 添加到软件包矩阵
-                packages_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
+              # 为每个设备和每个仓库创建三种配置变体
+              for repo in $repos; do
+                for pkg_config in Pro Max Ultra; do
+                  # 添加到完整矩阵
+                  matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"repo\":\"$repo\",\"pkg_config\":\"$pkg_config\"},"
+                  
+                  # 添加到基础系统矩阵 (仅Ultra配置)
+                  if [ "$pkg_config" = "Ultra" ]; then
+                    base_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"repo\":\"$repo\",\"pkg_config\":\"$pkg_config\"},"
+                  fi
+                  
+                  # 添加到软件包矩阵
+                  packages_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"repo\":\"$repo\",\"pkg_config\":\"$pkg_config\"},"
+                done
               done
             done
           done
@@ -111,11 +116,11 @@ jobs:
         id: build
         run: |
           # 设置构建目录
-          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}"
+          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}"
           echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
           
           # 生成缓存键
-          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-base-${{ github.sha }}"
+          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-base-${{ github.sha }}"
           echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
 
       - name: 缓存恢复
@@ -127,20 +132,38 @@ jobs:
             ${{ steps.build.outputs.build-dir }}/build_dir
           key: ${{ steps.build.outputs.cache-key }}
           restore-keys: |
-            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-base-
-            ${{ matrix.chip }}-${{ matrix.device }}-base-
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-base-
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-base-
 
       - name: 克隆源码
         run: |
-          # 克隆对应的源码仓库
-          REPO_URL=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f1)
-          REPO_BRANCH=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f2)
-          REPO_SHORT=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f3)
+          # 根据repo确定要使用的仓库
+          case "${{ matrix.repo }}" in
+            "immwrt")
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "openwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "libwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt-6.x.git"
+              REPO_BRANCH="k6.12-nss"
+              ;;
+            *)
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+          esac
           
+          echo "使用仓库: $REPO_URL"
+          echo "使用分支: $REPO_BRANCH"
+          echo "仓库缩写: ${{ matrix.repo }}"
+          
+          # 克隆源码
           git clone --depth 1 -b $REPO_BRANCH $REPO_URL ${{ steps.build.outputs.build-dir }}
           cd ${{ steps.build.outputs.build-dir }}
-          
-          echo "REPO_SHORT=$REPO_SHORT" >> $GITHUB_ENV
 
       - name: 设置第三方软件源
         run: |
@@ -166,9 +189,17 @@ jobs:
         run: |
           cd ${{ steps.build.outputs.build-dir }}
           
+          # 根据repo确定分支基础配置文件
+          case "${{ matrix.repo }}" in
+            "immwrt") BRANCH_CONFIG="imm_base.config" ;;
+            "openwrt") BRANCH_CONFIG="op_base.config" ;;
+            "libwrt") BRANCH_CONFIG="lib_base.config" ;;
+            *) BRANCH_CONFIG="imm_base.config" ;;
+          esac
+          
           # 合并配置文件 (软件包配置 > 分支配置 > 芯片配置)
           cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.chip }}_base.config" > .config
-          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ env.REPO_SHORT }}_base.config" >> .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/$BRANCH_CONFIG" >> .config
           cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.pkg_config }}.config" >> .config
           
           # 应用配置
@@ -203,7 +234,7 @@ jobs:
       - name: 上传基础系统构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+          name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}
           path: |
             ${{ steps.build.outputs.build-dir }}/dl
             ${{ steps.build.outputs.build-dir }}/staging_dir
@@ -226,18 +257,18 @@ jobs:
       - name: 下载基础系统构建产物
         uses: actions/download-artifact@v4
         with:
-          name: base-${{ matrix.chip }}-${{ matrix.device }}-Ultra
-          path: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+          name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-Ultra
+          path: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}
 
       - name: 设置构建环境
         id: build
         run: |
           # 设置构建目录
-          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}"
+          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}"
           echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
           
           # 生成缓存键
-          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-packages-${{ github.sha }}"
+          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-packages-${{ github.sha }}"
           echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
 
       - name: 缓存恢复
@@ -249,20 +280,38 @@ jobs:
             ${{ steps.build.outputs.build-dir }}/build_dir
           key: ${{ steps.build.outputs.cache-key }}
           restore-keys: |
-            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-packages-
-            ${{ matrix.chip }}-${{ matrix.device }}-packages-
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-packages-
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-packages-
 
       - name: 克隆源码
         run: |
-          # 克隆对应的源码仓库
-          REPO_URL=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f1)
-          REPO_BRANCH=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f2)
-          REPO_SHORT=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f3)
+          # 根据repo确定要使用的仓库
+          case "${{ matrix.repo }}" in
+            "immwrt")
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "openwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt.git"
+              REPO_BRANCH="master"
+              ;;
+            "libwrt")
+              REPO_URL="https://github.com/laipeng668/openwrt-6.x.git"
+              REPO_BRANCH="k6.12-nss"
+              ;;
+            *)
+              REPO_URL="https://github.com/laipeng668/immortalwrt.git"
+              REPO_BRANCH="master"
+              ;;
+          esac
           
+          echo "使用仓库: $REPO_URL"
+          echo "使用分支: $REPO_BRANCH"
+          echo "仓库缩写: ${{ matrix.repo }}"
+          
+          # 克隆源码
           git clone --depth 1 -b $REPO_BRANCH $REPO_URL ${{ steps.build.outputs.build-dir }}
           cd ${{ steps.build.outputs.build-dir }}
-          
-          echo "REPO_SHORT=$REPO_SHORT" >> $GITHUB_ENV
 
       - name: 设置第三方软件源
         run: |
@@ -288,9 +337,17 @@ jobs:
         run: |
           cd ${{ steps.build.outputs.build-dir }}
           
+          # 根据repo确定分支基础配置文件
+          case "${{ matrix.repo }}" in
+            "immwrt") BRANCH_CONFIG="imm_base.config" ;;
+            "openwrt") BRANCH_CONFIG="op_base.config" ;;
+            "libwrt") BRANCH_CONFIG="lib_base.config" ;;
+            *) BRANCH_CONFIG="imm_base.config" ;;
+          esac
+          
           # 合并配置文件 (软件包配置 > 分支配置 > 芯片配置)
           cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.chip }}_base.config" > .config
-          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ env.REPO_SHORT }}_base.config" >> .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/$BRANCH_CONFIG" >> .config
           cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.pkg_config }}.config" >> .config
           
           # 应用配置
@@ -366,14 +423,14 @@ jobs:
               TYPE="sysupgrade"
             fi
             
-            NEW_NAME="${{ env.REPO_SHORT }}-${{ matrix.device }}-${TYPE}-${{ matrix.pkg_config }}.bin"
+            NEW_NAME="${{ matrix.repo }}-${{ matrix.device }}-${TYPE}-${{ matrix.pkg_config }}.bin"
             mv "$bin" "$NEW_NAME"
           done
           
           # 重命名配置文件
           for config in .config .manifest .config.buildinfo; do
             if [ -f "$config" ]; then
-              NEW_NAME="${{ env.REPO_SHORT }}-${{ matrix.device }}-${{ matrix.pkg_config }}${config#.config}"
+              NEW_NAME="${{ matrix.repo }}-${{ matrix.device }}-${{ matrix.pkg_config }}${config#.config}"
               mv "$config" "$NEW_NAME"
             fi
           done
@@ -390,7 +447,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+          name: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}
           path: |
             ${{ env.OUTPUT_DIR }}/*.bin
             ${{ env.OUTPUT_DIR }}/*-config.tar.gz
