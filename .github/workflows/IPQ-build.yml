@@ -1,0 +1,461 @@
+name: 智能缓存分层分布式构建
+
+on:
+  schedule:
+    - cron: '0 16 * * 4' # 北京时间周五0点 (UTC+8)
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: '构建类型'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - base
+        - packages
+      force_rebuild:
+        description: '强制重建缓存'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REPO_URLS: |
+    https://github.com/laipeng668/immortalwrt.git:master:immwrt
+    https://github.com/laipeng668/openwrt.git:master:openwrt
+    https://github.com/laipeng668/openwrt-6.x.git:k6.12-nss:libwrt
+  CONFIG_DIR: configs
+  OUTPUT_DIR: output
+  DEFAULT_IP: 192.168.111.1
+  DEFAULT_HOSTNAME: WRT
+  DEFAULT_WIFI_PWD: 12345678
+
+jobs:
+  # 准备阶段：解析配置和生成构建矩阵
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      base-matrix: ${{ steps.generate-matrix.outputs.base-matrix }}
+      packages-matrix: ${{ steps.generate-matrix.outputs.packages-matrix }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 生成构建矩阵
+        id: generate-matrix
+        run: |
+          # 解析配置文件生成构建矩阵
+          matrix='{"include":['
+          base_matrix='{"include":['
+          packages_matrix='{"include":['
+          
+          # 获取所有设备配置
+          for device_config in $(ls configs/*_base.config | grep -v op_base | grep -v imm_base | grep -v lib_base); do
+            chip=$(basename "$device_config" _base.config)
+            echo "处理芯片配置: $chip"
+            
+            # 从配置文件中提取设备名称
+            devices=$(grep "CONFIG_TARGET_DEVICE.*_DEVICE_.*=y" "$device_config" | sed 's/.*_DEVICE_\(.*\)=y/\1/')
+            
+            for device in $devices; do
+              echo "发现设备: $device"
+              
+              # 为每个设备创建三种配置变体
+              for pkg_config in Pro Max Ultra; do
+                # 添加到完整矩阵
+                matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
+                
+                # 添加到基础系统矩阵 (仅Ultra配置)
+                if [ "$pkg_config" = "Ultra" ]; then
+                  base_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
+                fi
+                
+                # 添加到软件包矩阵
+                packages_matrix+="{\"chip\":\"$chip\",\"device\":\"$device\",\"pkg_config\":\"$pkg_config\"},"
+              done
+            done
+          done
+          
+          # 关闭JSON数组
+          matrix=${matrix%,}']}'
+          base_matrix=${base_matrix%,}']}'
+          packages_matrix=${packages_matrix%,}']}'
+          
+          echo "完整矩阵: $matrix"
+          echo "基础系统矩阵: $base_matrix"
+          echo "软件包矩阵: $packages_matrix"
+          
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+          echo "base-matrix=$base_matrix" >> $GITHUB_OUTPUT
+          echo "packages-matrix=$packages_matrix" >> $GITHUB_OUTPUT
+
+  # 基础系统编译阶段 (6个并发)
+  build-base:
+    needs: prepare
+    if: ${{ github.event.inputs.build_type != 'packages' || github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.base-matrix) }}
+      max-parallel: 6
+    outputs:
+      cache-key: ${{ steps.build.outputs.cache-key }}
+      build-dir: ${{ steps.build.outputs.build-dir }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置构建环境
+        id: build
+        run: |
+          # 设置构建目录
+          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}"
+          echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
+          
+          # 生成缓存键
+          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-base-${{ github.sha }}"
+          echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
+
+      - name: 缓存恢复
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ steps.build.outputs.build-dir }}/dl
+            ${{ steps.build.outputs.build-dir }}/staging_dir
+            ${{ steps.build.outputs.build-dir }}/build_dir
+          key: ${{ steps.build.outputs.cache-key }}
+          restore-keys: |
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-base-
+            ${{ matrix.chip }}-${{ matrix.device }}-base-
+
+      - name: 克隆源码
+        run: |
+          # 克隆对应的源码仓库
+          REPO_URL=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f1)
+          REPO_BRANCH=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f2)
+          REPO_SHORT=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f3)
+          
+          git clone --depth 1 -b $REPO_BRANCH $REPO_URL ${{ steps.build.outputs.build-dir }}
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          echo "REPO_SHORT=$REPO_SHORT" >> $GITHUB_ENV
+
+      - name: 设置第三方软件源
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 备份原始feeds文件
+          cp feeds.conf.default feeds.conf.default.bak
+          
+          # 添加第三方软件源 (kenzok8/small-package优先级最低)
+          {
+            echo "src-git tailscale https://github.com/tailscale/tailscale"
+            echo "src-git taskplan https://github.com/sirpdboy/luci-app-taskplan"
+            echo "src-git lucky https://github.com/gdy666/luci-app-lucky"
+            echo "src-git momo https://github.com/nikkinikki-org/OpenWrt-momo"
+            echo "src-git small https://github.com/kenzok8/small-package"
+          } >> feeds.conf.default
+          
+          # 更新feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 合并配置文件
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 合并配置文件 (软件包配置 > 分支配置 > 芯片配置)
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.chip }}_base.config" > .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ env.REPO_SHORT }}_base.config" >> .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.pkg_config }}.config" >> .config
+          
+          # 应用配置
+          make defconfig
+
+      - name: 设置默认配置
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 设置默认管理地址
+          sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+          
+          # 设置默认主机名
+          sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+          
+          # 设置管理员密码为空
+          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/ package/base-files/files/etc/shadow
+          
+          # 设置无线密码为空
+          sed -i "s/option key '.*'/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+
+      - name: 编译基础系统
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 编译基础系统 (不编译软件包)
+          make -j$(nproc) target/compile V=s || {
+            echo "基础系统编译失败"
+            exit 1
+          }
+
+      - name: 上传基础系统构建产物
+        uses: actions/upload-artifact@v3
+        with:
+          name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+          path: |
+            ${{ steps.build.outputs.build-dir }}/dl
+            ${{ steps.build.outputs.build-dir }}/staging_dir
+            ${{ steps.build.outputs.build_dir }}/build_dir
+          retention-days: 1
+
+  # 软件包编译阶段 (9个并发)
+  build-packages:
+    needs: [prepare, build-base]
+    if: ${{ github.event.inputs.build_type != 'base' || github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.packages-matrix) }}
+      max-parallel: 9
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载基础系统构建产物
+        uses: actions/download-artifact@v3
+        with:
+          name: base-${{ matrix.chip }}-${{ matrix.device }}-Ultra
+          path: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+
+      - name: 设置构建环境
+        id: build
+        run: |
+          # 设置构建目录
+          BUILD_DIR="build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}"
+          echo "build-dir=$BUILD_DIR" >> $GITHUB_OUTPUT
+          
+          # 生成缓存键
+          CACHE_KEY="${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-packages-${{ github.sha }}"
+          echo "cache-key=$CACHE_KEY" >> $GITHUB_OUTPUT
+
+      - name: 缓存恢复
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ steps.build.outputs.build-dir }}/dl
+            ${{ steps.build.outputs.build-dir }}/staging_dir
+            ${{ steps.build.outputs.build-dir }}/build_dir
+          key: ${{ steps.build.outputs.cache-key }}
+          restore-keys: |
+            ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}-packages-
+            ${{ matrix.chip }}-${{ matrix.device }}-packages-
+
+      - name: 克隆源码
+        run: |
+          # 克隆对应的源码仓库
+          REPO_URL=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f1)
+          REPO_BRANCH=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f2)
+          REPO_SHORT=$(echo "$REPO_URLS" | grep "${{ matrix.pkg_config }}" | cut -d: -f3)
+          
+          git clone --depth 1 -b $REPO_BRANCH $REPO_URL ${{ steps.build.outputs.build-dir }}
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          echo "REPO_SHORT=$REPO_SHORT" >> $GITHUB_ENV
+
+      - name: 设置第三方软件源
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 备份原始feeds文件
+          cp feeds.conf.default feeds.conf.default.bak
+          
+          # 添加第三方软件源 (kenzok8/small-package优先级最低)
+          {
+            echo "src-git tailscale https://github.com/tailscale/tailscale"
+            echo "src-git taskplan https://github.com/sirpdboy/luci-app-taskplan"
+            echo "src-git lucky https://github.com/gdy666/luci-app-lucky"
+            echo "src-git momo https://github.com/nikkinikki-org/OpenWrt-momo"
+            echo "src-git small https://github.com/kenzok8/small-package"
+          } >> feeds.conf.default
+          
+          # 更新feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 合并配置文件
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 合并配置文件 (软件包配置 > 分支配置 > 芯片配置)
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.chip }}_base.config" > .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ env.REPO_SHORT }}_base.config" >> .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_DIR/${{ matrix.pkg_config }}.config" >> .config
+          
+          # 应用配置
+          make defconfig
+
+      - name: 设置默认配置
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 设置默认管理地址
+          sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+          
+          # 设置默认主机名
+          sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+          
+          # 设置管理员密码为空
+          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/ package/base-files/files/etc/shadow
+          
+          # 设置无线密码为空
+          sed -i "s/option key '.*'/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+
+      - name: 编译软件包
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 编译软件包
+          make -j$(nproc) package/compile V=s || {
+            echo "软件包编译失败"
+            exit 1
+          }
+
+      - name: 编译固件
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 编译最终固件
+          make -j$(nproc) target/install V=s || {
+            echo "固件编译失败"
+            exit 1
+          }
+
+      - name: 收集构建产物
+        run: |
+          # 创建输出目录
+          mkdir -p $OUTPUT_DIR
+          
+          # 复制固件文件
+          cp ${{ steps.build.outputs.build-dir }}/bin/targets/*/*/*.bin $OUTPUT_DIR/ || true
+          cp ${{ steps.build.outputs.build-dir }}/bin/targets/*/*/*.manifest $OUTPUT_DIR/ || true
+          cp ${{ steps.build.outputs.build-dir }}/bin/targets/*/*/.config $OUTPUT_DIR/ || true
+          cp ${{ steps.build.outputs.build-dir }}/bin/targets/*/*/.config.buildinfo $OUTPUT_DIR/ || true
+          
+          # 复制软件包
+          mkdir -p $OUTPUT_DIR/packages
+          cp -r ${{ steps.build.outputs.build-dir }}/bin/packages/*/*/*.ipk $OUTPUT_DIR/packages/ || true
+          cp -r ${{ steps.build.outputs.build-dir }}/bin/targets/*/*/packages/*.ipk $OUTPUT_DIR/packages/ || true
+          
+          # 复制日志
+          mkdir -p $OUTPUT_DIR/logs
+          cp ${{ steps.build.outputs.build-dir }}/logs/*.log $OUTPUT_DIR/logs/ || true
+          
+          # 重命名文件
+          cd $OUTPUT_DIR
+          
+          # 获取芯片变量
+          CHIP_VAR=$(echo "${{ matrix.chip }}" | sed 's/ipq//')
+          
+          # 重命名固件
+          for bin in *.bin; do
+            if [[ "$bin" =~ "factory" ]]; then
+              TYPE="factory"
+            else
+              TYPE="sysupgrade"
+            fi
+            
+            NEW_NAME="${{ env.REPO_SHORT }}-${{ matrix.device }}-${TYPE}-${{ matrix.pkg_config }}.bin"
+            mv "$bin" "$NEW_NAME"
+          done
+          
+          # 重命名配置文件
+          for config in .config .manifest .config.buildinfo; do
+            if [ -f "$config" ]; then
+              NEW_NAME="${{ env.REPO_SHORT }}-${{ matrix.device }}-${{ matrix.pkg_config }}${config#.config}"
+              mv "$config" "$NEW_NAME"
+            fi
+          done
+          
+          # 打包配置文件
+          tar -czf "${CHIP_VAR}-config.tar.gz" *.config *.manifest *.config.buildinfo
+          
+          # 打包日志
+          tar -czf "${CHIP_VAR}-log.tar.gz" logs/*
+          
+          # 打包软件包
+          tar -czf "${CHIP_VAR}-app.tar.gz" packages/*
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.pkg_config }}
+          path: |
+            ${{ env.OUTPUT_DIR }}/*.bin
+            ${{ env.OUTPUT_DIR }}/*-config.tar.gz
+            ${{ env.OUTPUT_DIR }}/*-log.tar.gz
+            ${{ env.OUTPUT_DIR }}/*-app.tar.gz
+          retention-days: 7
+
+  # 发布阶段
+  release:
+    needs: [prepare, build-packages]
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: 准备发布内容
+        run: |
+          # 创建发布目录
+          mkdir -p release
+          
+          # 合并所有产物
+          find artifacts -name "*.bin" -exec cp {} release/ \;
+          find artifacts -name "*-config.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*-log.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*-app.tar.gz" -exec cp {} release/ \;
+          
+          # 生成发布说明
+          {
+            echo "# OpenWrt 固件发布"
+            echo ""
+            echo "## 默认配置"
+            echo "- 默认管理地址: $DEFAULT_IP"
+            echo "- 默认用户: root"
+            echo "- 默认密码: none"
+            echo "- 默认WIFI密码: $DEFAULT_WIFI_PWD"
+            echo ""
+            echo "## 固件信息"
+            echo "- 固件包括: 京东云亚瑟、雅典娜"
+            echo "- 固件内核版本: $(uname -r)"
+            echo "- 作者: Mary"
+            echo "- 发布时间: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo ""
+            echo "## 编译的luci-app列表"
+            echo "以下软件包已包含在固件中:"
+            find release -name "*.bin" | head -n 1 | xargs -I {} sh -c 'tar -tzf {}-app.tar.gz | grep "luci-app-" | sort -u' || true
+          } > release/NOTES.md
+
+      - name: 创建发布
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: $(date -u +'%Y-%m-%d')-ipq60xx
+          name: OpenWrt 固件发布 $(date -u +'%Y-%m-%d')
+          body_path: release/NOTES.md
+          files: |
+            release/*.bin
+            release/*-config.tar.gz
+            release/*-log.tar.gz
+            release/*-app.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
