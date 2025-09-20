@@ -124,8 +124,6 @@ jobs:
         with:
           path: |
             ${{ steps.build.outputs.build-dir }}/dl
-            ${{ steps.build.outputs.build-dir }}/build_dir
-            ${{ steps.build.outputs.build-dir }}/staging_dir
           key: ${{ steps.build.outputs.cache-key }}
           restore-keys: |
             ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-base-
@@ -306,14 +304,36 @@ jobs:
             exit 1
           }
 
+      - name: 准备基础系统产物
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          
+          # 创建输出目录
+          mkdir -p $OUTPUT_DIR
+          
+          # 复制配置文件
+          cp .config $OUTPUT_DIR/ || true
+          cp .config.buildinfo $OUTPUT_DIR/ || true
+          
+          # 复制软件包列表
+          if [ -d "bin/targets" ]; then
+            find bin/targets -name "*.manifest" -exec cp {} $OUTPUT_DIR/ \; || true
+          fi
+          
+          # 复制日志
+          mkdir -p $OUTPUT_DIR/logs
+          cp logs/*.log $OUTPUT_DIR/logs/ || true
+
       - name: 上传基础系统构建产物
         uses: actions/upload-artifact@v4
         with:
           name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}
           path: |
             ${{ steps.build.outputs.build-dir }}/dl
-            ${{ steps.build.outputs.build-dir }}/build_dir
-            ${{ steps.build.outputs.build-dir }}/staging_dir
+            ${{ env.OUTPUT_DIR }}/.config
+            ${{ env.OUTPUT_DIR }}/.config.buildinfo
+            ${{ env.OUTPUT_DIR }}/*.manifest
+            ${{ env.OUTPUT_DIR }}/logs/
           retention-days: 1
 
   # 软件包编译阶段 (6个并发)
@@ -333,7 +353,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: base-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-Ultra
-          path: build-${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}
+          path: base-files
 
       - name: 设置构建环境
         id: build
@@ -351,8 +371,6 @@ jobs:
         with:
           path: |
             ${{ steps.build.outputs.build-dir }}/dl
-            ${{ steps.build.outputs.build-dir }}/build_dir
-            ${{ steps.build.outputs.build-dir }}/staging_dir
           key: ${{ steps.build.outputs.cache-key }}
           restore-keys: |
             ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-packages-
@@ -373,6 +391,19 @@ jobs:
           ccache -M 5G  # 设置最大缓存大小为5GB
           echo "CCACHE_DIR=/tmp/ccache" >> $GITHUB_ENV
           echo "USE_CCACHE=1" >> $GITHUB_ENV
+
+      - name: 准备构建目录
+        run: |
+          # 设置构建目录
+          BUILD_DIR="${{ steps.build.outputs.build-dir }}"
+          
+          # 清理或创建构建目录
+          if [ -d "$BUILD_DIR" ]; then
+            echo "构建目录已存在，清理中..."
+            rm -rf "$BUILD_DIR"
+          fi
+          
+          mkdir -p "$BUILD_DIR"
 
       - name: 克隆源码
         run: |
@@ -403,6 +434,14 @@ jobs:
           # 克隆源码
           git clone --depth 1 -b $REPO_BRANCH $REPO_URL ${{ steps.build.outputs.build-dir }}
           cd ${{ steps.build.outputs.build-dir }}
+
+      - name: 恢复dl目录
+        run: |
+          # 恢复dl目录（如果存在）
+          if [ -d "base-files/dl" ]; then
+            echo "恢复dl目录..."
+            cp -r base-files/dl ${{ steps.build.outputs.build-dir }}/
+          fi
 
       - name: 设置第三方软件源
         run: |
