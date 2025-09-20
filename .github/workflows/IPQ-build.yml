@@ -206,16 +206,57 @@ jobs:
           cd ${{ steps.build.outputs.build-dir }}
           
           # 设置默认管理地址
-          sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+          if [ -f "package/base-files/files/bin/config_generate" ]; then
+            sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+            echo "已设置默认管理地址为: $DEFAULT_IP"
+          else
+            echo "警告: config_generate文件不存在，跳过设置默认管理地址"
+          fi
           
           # 设置默认主机名
-          sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+          if [ -f "package/base-files/files/bin/config_generate" ]; then
+            sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+            echo "已设置默认主机名为: $DEFAULT_HOSTNAME"
+          else
+            echo "警告: config_generate文件不存在，跳过设置默认主机名"
+          fi
           
           # 设置管理员密码为空
-          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
+          if [ -f "package/base-files/files/etc/shadow" ]; then
+            sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
+            echo "已设置管理员密码为空"
+          else
+            echo "警告: shadow文件不存在，跳过设置管理员密码"
+          fi
           
-          # 设置无线密码为空
-          sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+          # 设置无线密码为空 - 尝试多个可能的路径
+          WIFI_CONFIG_FOUND=false
+          
+          # 尝试路径1
+          if [ -f "package/kernel/mac80211/files/lib/wifi/mac80211.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径1)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 尝试路径2
+          if [ "$WIFI_CONFIG_FOUND" = "false" ] && [ -f "package/network/services/hostapd/files/wifi-hostapd.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/network/services/hostapd/files/wifi-hostapd.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径2)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 尝试路径3
+          if [ "$WIFI_CONFIG_FOUND" = "false" ] && [ -f "package/network/config/wifi-scripts/files/wifi-script.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/network/config/wifi-scripts/files/wifi-script.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径3)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 如果没有找到任何配置文件
+          if [ "$WIFI_CONFIG_FOUND" = "false" ]; then
+            echo "警告: 未找到无线配置文件，跳过设置无线密码"
+          fi
 
       - name: 编译基础系统
         run: |
@@ -354,16 +395,57 @@ jobs:
           cd ${{ steps.build.outputs.build-dir }}
           
           # 设置默认管理地址
-          sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+          if [ -f "package/base-files/files/bin/config_generate" ]; then
+            sed -i "s/192\.168\.[0-9]*\.[0-9]*/$DEFAULT_IP/g" package/base-files/files/bin/config_generate
+            echo "已设置默认管理地址为: $DEFAULT_IP"
+          else
+            echo "警告: config_generate文件不存在，跳过设置默认管理地址"
+          fi
           
           # 设置默认主机名
-          sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+          if [ -f "package/base-files/files/bin/config_generate" ]; then
+            sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
+            echo "已设置默认主机名为: $DEFAULT_HOSTNAME"
+          else
+            echo "警告: config_generate文件不存在，跳过设置默认主机名"
+          fi
           
           # 设置管理员密码为空
-          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
+          if [ -f "package/base-files/files/etc/shadow" ]; then
+            sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
+            echo "已设置管理员密码为空"
+          else
+            echo "警告: shadow文件不存在，跳过设置管理员密码"
+          fi
           
-          # 设置无线密码为空
-          sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+          # 设置无线密码为空 - 尝试多个可能的路径
+          WIFI_CONFIG_FOUND=false
+          
+          # 尝试路径1
+          if [ -f "package/kernel/mac80211/files/lib/wifi/mac80211.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径1)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 尝试路径2
+          if [ "$WIFI_CONFIG_FOUND" = "false" ] && [ -f "package/network/services/hostapd/files/wifi-hostapd.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/network/services/hostapd/files/wifi-hostapd.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径2)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 尝试路径3
+          if [ "$WIFI_CONFIG_FOUND" = "false" ] && [ -f "package/network/config/wifi-scripts/files/wifi-script.sh" ]; then
+            sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/network/config/wifi-scripts/files/wifi-script.sh
+            echo "已设置无线密码为: $DEFAULT_WIFI_PWD (路径3)"
+            WIFI_CONFIG_FOUND=true
+          fi
+          
+          # 如果没有找到任何配置文件
+          if [ "$WIFI_CONFIG_FOUND" = "false" ]; then
+            echo "警告: 未找到无线配置文件，跳过设置无线密码"
+          fi
 
       - name: 编译软件包
         run: |
