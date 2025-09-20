@@ -125,6 +125,7 @@ jobs:
           path: |
             ${{ steps.build.outputs.build-dir }}/dl
             ${{ steps.build.outputs.build-dir }}/build_dir
+            ${{ steps.build.outputs.build-dir }}/staging_dir
           key: ${{ steps.build.outputs.cache-key }}
           restore-keys: |
             ${{ matrix.chip }}-${{ matrix.device }}-${{ matrix.repo }}-${{ matrix.pkg_config }}-base-
@@ -278,10 +279,10 @@ jobs:
           cd ${{ steps.build.outputs.build-dir }}
           make clean
 
-      - name: 下载工具链
+      - name: 下载工具链和源码
         run: |
           cd ${{ steps.build.outputs.build-dir }}
-          make download
+          make -j1 download V=s
 
       - name: 编译工具链
         run: |
@@ -291,19 +292,11 @@ jobs:
             exit 1
           }
 
-      - name: 编译内核
-        run: |
-          cd ${{ steps.build.outputs.build-dir }}
-          make -j1 kernel/compile V=s || {
-            echo "内核编译失败"
-            exit 1
-          }
-
       - name: 编译基础系统
         run: |
           cd ${{ steps.build.outputs.build-dir }}
           
-          # 编译基础系统 (不编译软件包)
+          # 编译基础系统 (包括内核)
           # 使用-j1减少并行度，避免资源不足
           make -j1 V=s target/compile || {
             echo "基础系统编译失败"
