@@ -92,7 +92,7 @@ jobs:
           echo "base-matrix=$base_matrix" >> $GITHUB_OUTPUT
           echo "packages-matrix=$packages_matrix" >> $GITHUB_OUTPUT
 
-  # 基础系统编译阶段 (6个并发)
+  # 基础系统编译阶段 (3个并发，减少并发数)
   build-base:
     needs: prepare
     if: ${{ github.event.inputs.build_type != 'packages' || github.event_name == 'schedule' }}
@@ -100,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.base-matrix) }}
-      max-parallel: 6
+      max-parallel: 3  # 减少并发数，避免资源不足
     outputs:
       cache-key: ${{ steps.build.outputs.cache-key }}
       build-dir: ${{ steps.build.outputs.build-dir }}
@@ -273,13 +273,22 @@ jobs:
             echo "警告: 未找到无线配置文件，跳过设置无线密码"
           fi
 
+      - name: 清理构建目录
+        run: |
+          cd ${{ steps.build.outputs.build-dir }}
+          make clean
+
       - name: 编译基础系统
         run: |
           cd ${{ steps.build.outputs.build-dir }}
           
           # 编译基础系统 (不编译软件包)
-          make -j$(nproc) target/compile V=s || {
+          # 使用-j1减少并行度，避免资源不足
+          make -j1 V=s target/compile || {
             echo "基础系统编译失败"
+            # 输出错误日志
+            echo "=== 错误日志 ==="
+            find . -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
             exit 1
           }
 
@@ -292,7 +301,7 @@ jobs:
             ${{ steps.build.outputs.build-dir }}/build_dir
           retention-days: 1
 
-  # 软件包编译阶段 (9个并发)
+  # 软件包编译阶段 (6个并发)
   build-packages:
     needs: [prepare, build-base]
     if: ${{ github.event.inputs.build_type != 'base' || github.event_name == 'schedule' }}
@@ -300,7 +309,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.packages-matrix) }}
-      max-parallel: 9
+      max-parallel: 6  # 减少并发数，避免资源不足
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -481,8 +490,12 @@ jobs:
           cd ${{ steps.build.outputs.build-dir }}
           
           # 编译软件包
-          make -j$(nproc) package/compile V=s || {
+          # 使用-j2减少并行度，避免资源不足
+          make -j2 V=s package/compile || {
             echo "软件包编译失败"
+            # 输出错误日志
+            echo "=== 错误日志 ==="
+            find . -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
             exit 1
           }
 
@@ -491,8 +504,12 @@ jobs:
           cd ${{ steps.build.outputs.build-dir }}
           
           # 编译最终固件
-          make -j$(nproc) target/install V=s || {
+          # 使用-j2减少并行度，避免资源不足
+          make -j2 V=s target/install || {
             echo "固件编译失败"
+            # 输出错误日志
+            echo "=== 错误日志 ==="
+            find . -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
             exit 1
           }
 
