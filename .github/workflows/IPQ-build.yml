@@ -212,10 +212,10 @@ jobs:
           sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
           
           # 设置管理员密码为空
-          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/ package/base-files/files/etc/shadow
+          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
           
           # 设置无线密码为空
-          sed -i "s/option key '.*'/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+          sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
 
       - name: 编译基础系统
         run: |
@@ -360,10 +360,10 @@ jobs:
           sed -i "s/hostname='.*'/hostname='$DEFAULT_HOSTNAME'/g" package/base-files/files/bin/config_generate
           
           # 设置管理员密码为空
-          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/ package/base-files/files/etc/shadow
+          sed -i 's/root:::0:0:99999:7:::/root:$1$0J2m2vLs$6JzOJl5n7V5fV5fV5fV5f1:0:0:99999:7:::/' package/base-files/files/etc/shadow
           
           # 设置无线密码为空
-          sed -i "s/option key '.*'/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
+          sed -i "s/option key .*/option key '$DEFAULT_WIFI_PWD'/g" package/kernel/mac80211/files/lib/wifi/mac80211.sh
 
       - name: 编译软件包
         run: |
